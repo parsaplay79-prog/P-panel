@@ -72,6 +72,7 @@ class Customer(Base):
 
     configurations: Mapped[list["Configuration"]] = relationship(back_populates="customer")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer")
+    support_tickets: Mapped[list["SupportTicket"]] = relationship(back_populates="customer")
 
 
 class Admin(Base):
@@ -449,7 +450,10 @@ class TelegramBotState(Base):
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (
-        CheckConstraint("actor_type IN ('admin', 'system')", name="ck_audit_log_actor_type"),
+        CheckConstraint(
+            "actor_type IN ('admin', 'system', 'customer')",
+            name="ck_audit_log_actor_type",
+        ),
         Index("idx_audit_log_target", "target_type", "target_id"),
     )
 
@@ -461,6 +465,71 @@ class AuditLog(Base):
     target_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     details_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = _created_at()
+
+
+class SupportTicket(Base):
+    """A customer support conversation.
+
+    The support button used to answer with static text and no persistence, so
+    a message sent there went nowhere: nobody was told it existed, nothing was
+    recorded, and the customer had no ticket id to quote. This table is what
+    makes the exchange survive a restart and reach an admin.
+    """
+
+    __tablename__ = "support_tickets"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'answered', 'closed')",
+            name="ck_support_tickets_status",
+        ),
+        Index("idx_support_tickets_customer", "customer_id"),
+        Index("idx_support_tickets_status", "status"),
+    )
+
+    id: Mapped[str] = _uuid_pk()
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
+    subject: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="open")
+    last_admin_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _created_at()
+
+    customer: Mapped[Customer] = relationship(back_populates="support_tickets")
+    messages: Mapped[list["SupportMessage"]] = relationship(
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        order_by="SupportMessage.created_at",
+    )
+
+
+class SupportMessage(Base):
+    """One message in a support ticket, from either side.
+
+    Separate rows rather than columns on the ticket because the conversation is
+    append-only: an admin reply that overwrote the customer's question would
+    leave no record of what was actually asked.
+    """
+
+    __tablename__ = "support_messages"
+    __table_args__ = (
+        CheckConstraint(
+            "author_type IN ('customer', 'admin')",
+            name="ck_support_messages_author_type",
+        ),
+        Index("idx_support_messages_ticket", "ticket_id"),
+    )
+
+    id: Mapped[str] = _uuid_pk()
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("support_tickets.id"), nullable=False)
+    author_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Telegram ids, not Admin/Customer rows: an admin replying from Telegram is
+    # identified by their chat id, and a customer keeps their id even if the
+    # customer row is later removed.
+    author_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    ticket: Mapped[SupportTicket] = relationship(back_populates="messages")
 
 
 class NotificationsLog(Base):

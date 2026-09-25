@@ -44,6 +44,41 @@ def _load_bundle() -> str:
     return path.read_text(encoding="utf-8")
 
 
+async def _current_doh_endpoint(db: AsyncSession) -> str:
+    """The DoH endpoint to embed in a newly provisioned Node.
+
+    Read from the current gaming profile's `doh_endpoint`. Falls back to the
+    worker's own built-in default (empty string → the worker substitutes
+    Cloudflare's resolver) when no profile exists or the key is unusable, so a
+    missing profile degrades to today's behaviour rather than provisioning a
+    Node with no resolver at all.
+    """
+    from db.models import GamingProfile
+
+    profile = (
+        await db.execute(
+            select(GamingProfile).where(GamingProfile.is_current.is_(True)).limit(1)
+        )
+    ).scalar_one_or_none()
+    if profile is None or not isinstance(profile.settings_json, dict):
+        return ""
+
+    endpoint = profile.settings_json.get("doh_endpoint")
+    if not isinstance(endpoint, str):
+        return ""
+
+    # The worker parses this as a URL and appends its own query for the
+    # ?name= path; a non-http value would produce a Node that boots but cannot
+    # resolve anything, which is worse than falling back.
+    if not endpoint.startswith(("https://", "http://")):
+        logger.warning(
+            "gaming profile doh_endpoint is not an http(s) URL — falling back: %r",
+            endpoint,
+        )
+        return ""
+    return endpoint
+
+
 def derive_secure_path(node_id: str) -> str:
     """Deterministic secret path segment for the node's DoH/health routes.
 
@@ -114,6 +149,55 @@ async def attach_node_to_pools(
     return linked
 
 
+async def repair_pool_links(db: AsyncSession) -> dict[str, list[str]]:
+    """Link every existing node to the pools it belongs to. Startup repair.
+
+    attach_node_to_pools() only runs for a node this process just provisioned,
+    so a node that existed before that code shipped — or whose pool was created
+    afterwards — stays in no pool forever. The symptom is precise and easy to
+    miss: the node reports healthy, `nodes` and `pools` both look correct,
+    `pool_nodes` is empty, and every fulfillment fails with "no eligible node"
+    even though there is capacity. That is exactly what production looked like.
+
+    Idempotent, so it is safe on every boot: a link that already exists is
+    skipped, and a node that genuinely belongs in no pool logs a warning
+    rather than being forced into one.
+    """
+    nodes = (
+        await db.execute(select(Node).where(Node.state != "DECOMMISSIONED"))
+    ).scalars().all()
+
+    linked: dict[str, list[str]] = {}
+    for node in nodes:
+        pools = await attach_node_to_pools(db, node)
+        if pools:
+            linked[node.id] = pools
+
+    if linked:
+        logger.info(
+            "pool link repair: %d/%d node(s) linked", len(linked), len(nodes)
+        )
+    elif nodes:
+        logger.warning(
+            "pool link repair linked nothing across %d node(s) — fulfillment "
+            "will fail until a pool matching their capability_tags exists",
+            len(nodes),
+        )
+    return linked
+
+
+async def repair_pool_links_at_startup() -> None:
+    """Zero-arg entrypoint for the startup list in api.main.lifespan.
+
+    Matches the shape of the other seed steps (they all open their own
+    session) so it can be listed alongside them and fail independently.
+    """
+    from db.base import SessionLocal
+
+    async with SessionLocal() as db:
+        await repair_pool_links(db)
+
+
 async def provision_node(
     db: AsyncSession,
     cloudflare_account_id: str,
@@ -151,7 +235,15 @@ async def provision_node(
     node_secret_hash = derive_node_secret_hash(node_secret)
 
     # 3. Provisioned settings embed (Document 1/5: no admin credentials in the
-    #    data plane, ever)
+    #    data plane, ever).
+    #
+    #    `dohUrl` is no longer hardcoded empty. The worker resolves DNS through
+    #    this endpoint — both the DoH handler and the in-tunnel UDP:53 path —
+    #    so leaving it blank meant the worker's built-in Cloudflare default was
+    #    the only resolver the platform could ever use, and a gaming profile's
+    #    `doh_endpoint` was stored-but-unread data. The Tier A "antisanction
+    #    DNS" promise rides on this value actually reaching the Node.
+    doh_endpoint = await _current_doh_endpoint(db)
     provisioned = {
         "nodeId": node_id,
         "verdentUrl": settings.subscription_base_url or "",
@@ -161,7 +253,7 @@ async def provision_node(
         "proxyIPs": [],
         "prefixes": [],
         "fallback": "",
-        "dohUrl": "",
+        "dohUrl": doh_endpoint,
     }
 
     # 4. Upload → enable subdomain → re-upload. Two uploads on purpose:

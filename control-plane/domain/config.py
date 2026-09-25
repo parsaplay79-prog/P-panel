@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     # Durable Objects need Workers Paid; on free plans leave false and the
     # Node degrades to fail-open session checks (warning logged at the edge).
     nodes_enable_durable_objects: bool = False
+    # Replay protection for node ingest. Redis is the only nonce store we
+    # have, so when it is unreachable the choice is between rejecting every
+    # signed request (ingestion stops, health/usage reporting stops) and
+    # accepting every request (replay within the 120s signature window is
+    # possible — the exact hole NODE_REPLAY_FAIL_OPEN would reopen). We reject,
+    # and say so loudly, because a loudly broken control plane is recoverable
+    # and a silently replayable one is not. Set true only if you would rather
+    # have a degraded ledger than no ledger — an operator's conscious call.
+    node_replay_fail_open: bool = False
     # Deployed fork bundle uploaded to Cloudflare at provisioning time.
     node_worker_bundle_path: str = "assets/worker_bundle.js"
 

@@ -69,8 +69,27 @@ export async function VlOverWSHandler(request: Request, env: Env, ctx: Execution
                 throw new Error(parsed.message);
             }
 
-            // Verdent fork: resolution + admission succeeded — open this
-            // connection's ledger slice.
+            // Verdent fork: concurrent-session admission (Document 1 #5).
+            // It happens HERE, after every parse-time rejection above, so the
+            // increment and the `admitted` flag that owns the matching
+            // decrement are set in one place and cannot drift. Over the limit,
+            // refuse cleanly — a client-recognizable close, not a silent hang.
+            const admittedNow = await incrSession(
+                env,
+                parsed.configId,
+                parsed.deviceLimit ?? 1,
+                ctx
+            );
+
+            if (!admittedNow) {
+                log('device limit reached');
+                throw new Error('device limit reached');
+            }
+
+            // Resolution + admission succeeded — open this connection's ledger
+            // slice. `admitted` is what finalize() gates the decrement on, so
+            // it must be set for every path that incremented, including the
+            // UDP rejection below.
             admitted = true;
             userConfigId = parsed.configId;
             tracker = new UsageTracker(parsed.configId, env, ctx);
@@ -81,7 +100,7 @@ export async function VlOverWSHandler(request: Request, env: Env, ctx: Execution
             if (parsed.isUDP) {
                 if (parsed.portRemote === 53) {
                     isDns = true;
-                    const { write } = await handleUDPOutBound(webSocket, VLResponseHeader, log);
+                    const { write } = await handleUDPOutBound(webSocket, VLResponseHeader, log, tracker);
                     udpStreamWrite = write;
                     await udpStreamWrite(rawClientData);
                     return;
@@ -134,6 +153,7 @@ interface VlParsed {
     VLVersion?: Uint8Array;
     isUDP?: boolean;
     configId?: string;
+    deviceLimit?: number;
 }
 
 async function parseVlHeader(
@@ -159,15 +179,11 @@ async function parseVlHeader(
         return { hasError: true, message: 'invalid user' };
     }
 
-    // Verdent fork: concurrent-session admission (Document 1 #5). Over the
-    // limit, refuse cleanly — a client-recognizable close, not a silent hang.
-    const deviceLimit = user.deviceLimit ?? 1;
-    const admitted = await incrSession(env, user.configId, deviceLimit, ctx);
-
-    if (!admitted) {
-        log('device limit reached');
-        return { hasError: true, message: 'device limit reached' };
-    }
+    // Verdent fork: admission is NOT done here. parseVlHeader returns the
+    // resolved identity and every parse-time rejection happens before the
+    // caller increments — see the write handler. Incrementing here and then
+    // returning an error (a malformed address, an unsupported command) left
+    // the slot charged with nobody owning the refund.
 
     const optLength = new Uint8Array(VLBuffer.slice(17, 18))[0];
     const command = new Uint8Array(VLBuffer.slice(18 + optLength, 18 + optLength + 1))[0];
@@ -240,6 +256,7 @@ async function parseVlHeader(
         VLVersion,
         isUDP,
         configId: user.configId,
+        deviceLimit: user.deviceLimit ?? 1,
     };
 }
 
@@ -284,7 +301,12 @@ function stringify(arr: Uint8Array, offset = 0) {
     return uuid;
 }
 
-async function handleUDPOutBound(webSocket: WebSocket, VLResponseHeader: Uint8Array<ArrayBuffer>, log: Function) {
+async function handleUDPOutBound(
+    webSocket: WebSocket,
+    VLResponseHeader: Uint8Array<ArrayBuffer>,
+    log: Function,
+    tracker: UsageTracker | null = null
+) {
     let isVLHeaderSent = false;
 
     const transformStream = new TransformStream({
@@ -305,7 +327,25 @@ async function handleUDPOutBound(webSocket: WebSocket, VLResponseHeader: Uint8Ar
         .pipeTo(
             new WritableStream({
                 async write(chunk) {
-                    const resp = await fetch('https://cloudflare-dns.com/dns-query', {
+                    // Verdent fork: the DNS leg is billed like any other leg.
+                    // This path relayed every query and answer without ever
+                    // touching the tracker, so a customer could push all their
+                    // traffic through in-tunnel DNS and the plan's quota would
+                    // never move — under-billing on exactly the path the
+                    // gaming profile's "antisanction DNS" promise sells.
+                    // Counted here as the upstream query, matching the TCP
+                    // leg's trackUp in common.ts.
+                    if (tracker) tracker.trackUp(chunk.byteLength);
+
+                    // Verdent fork: resolve through the Node's configured DoH
+                    // endpoint, not a hardcoded one. This is the DNS path the
+                    // Tier A "antisanction DNS" gaming promise rides on, so a
+                    // profile's doh_endpoint has to reach it or the promise is
+                    // decoration. Trailing query params are stripped: this
+                    // request carries a raw dns-message body, not a ?name=.
+                    const { dohUrl } = getGlobals();
+                    const dnsEndpoint = (dohUrl || 'https://cloudflare-dns.com/dns-query').split('?')[0];
+                    const resp = await fetch(dnsEndpoint, {
                         method: 'POST',
                         headers: {
                             'content-type': 'application/dns-message',
@@ -315,6 +355,12 @@ async function handleUDPOutBound(webSocket: WebSocket, VLResponseHeader: Uint8Ar
 
                     const dnsQueryResult = await resp.arrayBuffer();
                     const udpSize = dnsQueryResult.byteLength;
+
+                    // Downstream leg: the resolver's answer, counted only when
+                    // a response actually arrived, so a failed lookup is not
+                    // billed to the customer.
+                    if (tracker) tracker.trackDown(udpSize);
+
                     const udpSizeBuffer = new Uint8Array([(udpSize >> 8) & 0xff, udpSize & 0xff]);
 
                     if (webSocket.readyState === WS_READY_STATE_OPEN) {

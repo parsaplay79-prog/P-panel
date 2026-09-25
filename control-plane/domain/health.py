@@ -17,6 +17,7 @@ for FAILOVER_AFTER_OFFLINE — never on the first blip, never while PROVISIONING
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -44,6 +45,102 @@ SCORE_OFFLINE = 0
 OPERATOR_HELD_STATES = {"MAINTENANCE", "QUARANTINED", "DECOMMISSIONED"}
 
 
+@dataclass(frozen=True)
+class HealthThresholds:
+    """The hysteresis numbers for one node.
+
+    Defaults reproduce the module constants exactly, so a node with no gaming
+    profile behaves as before. A gaming profile may override them, which is
+    what makes `settings_json.stability_thresholds` a real setting instead of
+    stored-but-unread data.
+    """
+
+    degraded_after_failures: int = DEGRADED_AFTER_FAILURES
+    offline_after_failures: int = OFFLINE_AFTER_FAILURES
+    online_after_successes: int = ONLINE_AFTER_SUCCESSES
+    failover_after_offline: timedelta = FAILOVER_AFTER_OFFLINE
+
+
+DEFAULT_THRESHOLDS = HealthThresholds()
+
+
+def parse_thresholds(settings_json: dict | None) -> HealthThresholds:
+    """Build HealthThresholds from a gaming profile's settings_json.
+
+    Anything malformed falls back to the default for that field rather than
+    raising: this runs inside the health loop, and a bad profile must not be
+    able to stop every node from being probed. Values are also bounded — a
+    zero or negative `offline_after_failures` would mark a node OFFLINE on its
+    first missed probe, and `degraded > offline` would make DEGRADED
+    unreachable, so both are rejected in favour of the default.
+    """
+    if not isinstance(settings_json, dict):
+        return DEFAULT_THRESHOLDS
+
+    raw = settings_json.get("stability_thresholds")
+    if not isinstance(raw, dict):
+        return DEFAULT_THRESHOLDS
+
+    def _positive_int(key: str, default: int) -> int:
+        value = raw.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return default
+        return value
+
+    degraded = _positive_int("degraded_after_failures", DEGRADED_AFTER_FAILURES)
+    offline = _positive_int("offline_after_failures", OFFLINE_AFTER_FAILURES)
+    online = _positive_int("online_after_successes", ONLINE_AFTER_SUCCESSES)
+
+    # DEGRADED is the band between the two failure counts; if the profile
+    # inverts them the band is empty and only OFFLINE is ever reached. Keep
+    # the default shape instead of silently disabling the intermediate state.
+    if degraded > offline:
+        degraded, offline = DEGRADED_AFTER_FAILURES, OFFLINE_AFTER_FAILURES
+
+    minutes = raw.get("failover_after_offline_minutes")
+    if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or minutes <= 0:
+        failover = FAILOVER_AFTER_OFFLINE
+    else:
+        failover = timedelta(minutes=float(minutes))
+
+    return HealthThresholds(
+        degraded_after_failures=degraded,
+        offline_after_failures=offline,
+        online_after_successes=online,
+        failover_after_offline=failover,
+    )
+
+
+def thresholds_for_node(node: Node, gaming_settings: dict | None) -> HealthThresholds:
+    """Per-node thresholds: only gaming-tagged nodes follow the gaming profile.
+
+    A general node on the same platform must keep the default hysteresis —
+    tuning every node because one profile changed would turn a gaming
+    preference into a platform-wide outage risk.
+    """
+    if gaming_settings is None:
+        return DEFAULT_THRESHOLDS
+    if "gaming" not in set(node.capability_tags or []):
+        return DEFAULT_THRESHOLDS
+    return parse_thresholds(gaming_settings)
+
+
+async def load_current_gaming_settings(db: AsyncSession) -> dict | None:
+    """settings_json of the current gaming profile, or None if none exists.
+
+    Read once per pass and shared across nodes — this is one query per health
+    pass, not one per node.
+    """
+    from db.models import GamingProfile
+
+    profile = (
+        await db.execute(
+            select(GamingProfile).where(GamingProfile.is_current.is_(True)).limit(1)
+        )
+    ).scalar_one_or_none()
+    return profile.settings_json if profile is not None else None
+
+
 async def check_node_once(node: Node) -> tuple[bool, float | None]:
     """(success, latency_ms) — one probe against the node's health route."""
     from domain.provisioning import derive_secure_path
@@ -64,7 +161,12 @@ async def check_node_once(node: Node) -> tuple[bool, float | None]:
         return False, None
 
 
-def apply_health_transition(node: Node, success: bool, latency_ms: float | None) -> str:
+def apply_health_transition(
+    node: Node,
+    success: bool,
+    latency_ms: float | None,
+    thresholds: HealthThresholds = DEFAULT_THRESHOLDS,
+) -> str:
     """Update health fields per the hysteresis rules; return new state.
 
     The counters are real columns, not Python attributes. The health loop
@@ -93,7 +195,7 @@ def apply_health_transition(node: Node, success: bool, latency_ms: float | None)
         # node that flaps doesn't inherit a stale failover countdown.
         node.offline_since = None
 
-        if node.consecutive_successes >= ONLINE_AFTER_SUCCESSES:
+        if node.consecutive_successes >= thresholds.online_after_successes:
             node.state = "ONLINE"
         elif node.state == "OFFLINE":
             # First success after being down: recovering, but not yet trusted.
@@ -107,20 +209,26 @@ def apply_health_transition(node: Node, success: bool, latency_ms: float | None)
     node.consecutive_failures = (node.consecutive_failures or 0) + 1
 
     fails = node.consecutive_failures
-    if fails >= OFFLINE_AFTER_FAILURES:
+    if fails >= thresholds.offline_after_failures:
         if node.state != "OFFLINE":
             # Stamp the transition once. Failover waits on this, so overwriting
             # it every pass would reset the countdown forever and never fire.
             node.offline_since = datetime.now(timezone.utc)
         node.state = "OFFLINE"
-    elif fails >= DEGRADED_AFTER_FAILURES or node.state == "OFFLINE":
+    elif fails >= thresholds.degraded_after_failures or node.state == "OFFLINE":
         node.state = "DEGRADED"
     return node.state
 
 
-async def failover_offline_nodes(db: AsyncSession) -> int:
-    """Re-mint primary assignments of configs on long-offline nodes."""
-    cutoff = datetime.now(timezone.utc) - FAILOVER_AFTER_OFFLINE
+async def failover_offline_nodes(
+    db: AsyncSession, gaming_settings: dict | None = None
+) -> int:
+    """Re-mint primary assignments of configs on long-offline nodes.
+
+    `gaming_settings` is the current gaming profile's settings_json (or None).
+    It only affects gaming-tagged nodes; the failover window is per-node, so
+    the gate is computed inside the loop rather than once up front.
+    """
     moved = 0
 
     offline_nodes = (
@@ -130,8 +238,10 @@ async def failover_offline_nodes(db: AsyncSession) -> int:
     for node in offline_nodes:
         # Gate on when the node *entered* OFFLINE, not on its most recent
         # failed sample — that is rewritten every 60s, so it is never older
-        # than the 10-minute cutoff and the gate could never open.
+        # than the cutoff and the gate could never open.
         offline_since = node.offline_since
+        window = thresholds_for_node(node, gaming_settings).failover_after_offline
+        cutoff = datetime.now(timezone.utc) - window
         if offline_since is None or offline_since > cutoff:
             continue
 
@@ -241,11 +351,20 @@ async def health_check_pass() -> dict:
             await db.execute(select(Node).where(Node.state.notin_(["DECOMMISSIONED"])))
         ).scalars().all()
 
+        # One query for the whole pass. Gaming-tagged nodes follow the current
+        # profile's stability thresholds; everything else keeps the defaults.
+        gaming_settings = await load_current_gaming_settings(db)
+
         results = []
 
         for node in nodes:
             success, latency = await check_node_once(node)
-            state = apply_health_transition(node, success, latency)
+            state = apply_health_transition(
+                node,
+                success,
+                latency,
+                thresholds_for_node(node, gaming_settings),
+            )
 
             db.add(
                 NodeHealthSample(
@@ -259,7 +378,7 @@ async def health_check_pass() -> dict:
 
         await db.commit()
 
-        await failover_offline_nodes(db)
+        await failover_offline_nodes(db, gaming_settings)
 
     online = sum(1 for r in results if r["ok"])
     logger.info("health pass: %d/%d online", online, len(results))

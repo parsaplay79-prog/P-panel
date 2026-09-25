@@ -69,7 +69,12 @@ async def publish_profile(
     new = GamingProfile(
         version=(current.version + 1) if current else 1,
         name=name,
-        settings_json=json.dumps(settings_json, ensure_ascii=False),
+        # The dict, not json.dumps(...): settings_json is JSONB, so SQLAlchemy
+        # serializes it. Handing it a pre-encoded string stores a JSON string
+        # instead of an object, and the honest-copy rules every gaming profile
+        # exists to enforce (Document 2) become unreachable — the safety
+        # toggles could be read back as a string and never as settings.
+        settings_json=settings_json,
         is_current=True,
     )
 

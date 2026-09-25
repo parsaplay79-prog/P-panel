@@ -262,7 +262,7 @@ CREATE TABLE telegram_bot_state (
 
 CREATE TABLE audit_log (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_type          TEXT NOT NULL CHECK (actor_type IN ('admin', 'system')),
+    actor_type          TEXT NOT NULL CHECK (actor_type IN ('admin', 'system', 'customer')),
     actor_id            UUID,                                  -- references admins(id) when actor_type = 'admin'
     action              TEXT NOT NULL,
     target_type         TEXT NOT NULL,
@@ -279,3 +279,25 @@ CREATE TABLE notifications_log (
     sent_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_notifications_customer_type ON notifications_log(customer_id, notification_type);
+
+CREATE TABLE support_tickets (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id         UUID NOT NULL REFERENCES customers(id),
+    subject             TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'closed')),
+    last_admin_reply_at TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_support_tickets_customer ON support_tickets(customer_id);
+CREATE INDEX idx_support_tickets_status ON support_tickets(status);
+
+CREATE TABLE support_messages (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_id           UUID NOT NULL REFERENCES support_tickets(id),
+    author_type         TEXT NOT NULL CHECK (author_type IN ('customer', 'admin')),
+    author_telegram_id  BIGINT NOT NULL,
+    body                TEXT NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_support_messages_ticket ON support_messages(ticket_id);

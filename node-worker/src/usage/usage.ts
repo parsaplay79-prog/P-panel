@@ -95,35 +95,68 @@ export class UsageTracker {
         this.flushing = true;
         this.flushQueued = false;
 
-        try {
-            const bytesUp = this.bytesUp;
-            const bytesDown = this.bytesDown;
-            const windowStartedAt = this.windowStartedAt;
+        // Snapshot the slice. The counters are NOT cleared yet — see the
+        // success branch below for why clearing here loses bytes.
+        const bytesUp = this.bytesUp;
+        const bytesDown = this.bytesDown;
+        const windowStartedAt = this.windowStartedAt;
 
-            this.bytesUp = 0;
-            this.bytesDown = 0;
+        if (bytesUp === 0 && bytesDown === 0) {
+            this.flushing = false;
+            return;
+        }
+
+        const event: UsageEvent = {
+            configId: this.configId,
+            connectionId: this.connectionId,
+            // The number this slice WILL have. It is only committed on
+            // success (see below): a retry must reuse the same number so the
+            // server's (connectionId, sequenceNumber) key can recognise it.
+            // Advancing it up front would make every retry look like new
+            // traffic and double-count the same bytes.
+            sequenceNumber: this.sequenceNumber + 1,
+            bytesUp,
+            bytesDown,
+            windowStartedAt: new Date(windowStartedAt).toISOString(),
+            reportedAt: new Date().toISOString()
+        };
+
+        try {
+            await postUsageEvent(this.env, event);
+
+            // ONLY now is this slice safe to drop. Clearing before the await
+            // (as this did) meant a failed POST destroyed the bytes: the
+            // counters were already back at 0, so the "next flush retries"
+            // comment was never true and the traffic was simply lost. Every
+            // Redis blip would have handed customers free bandwidth.
+            //
+            // Subtract rather than assign: traffic keeps arriving during the
+            // await, and those bytes belong to the NEXT window.
+            this.sequenceNumber = event.sequenceNumber;
+            this.bytesUp -= bytesUp;
+            this.bytesDown -= bytesDown;
             this.windowStartedAt = Date.now();
             this.lastFlushAt = Date.now();
-
-            if (bytesUp === 0 && bytesDown === 0) return;
-
-            const event: UsageEvent = {
-                configId: this.configId,
-                connectionId: this.connectionId,
-                sequenceNumber: ++this.sequenceNumber,
-                bytesUp,
-                bytesDown,
-                windowStartedAt: new Date(windowStartedAt).toISOString(),
-                reportedAt: new Date().toISOString()
-            };
-
-            await postUsageEvent(this.env, event);
         } catch (error) {
-            // Never crash the relay on accounting failure; the next flush
-            // retries with a new sequence number (at-most-once per slice).
-            console.error('Usage flush failed:', error);
+            // Never crash the relay on accounting failure. The slice is kept
+            // AND the sequence number is not advanced, so the retry resends
+            // the identical (connectionId, sequenceNumber) pair. If the first
+            // POST actually landed and only the response was lost, the server
+            // sees the duplicate key and drops it — no double count. If it
+            // never landed, the retry records it once. Either way the bytes
+            // are counted exactly once, which is only true because the number
+            // is stable across retries.
+            console.error('Usage flush failed, bytes retained for retry:', error);
+            this.lastFlushAt = Date.now();
         } finally {
             this.flushing = false;
+            // A flush requested while this one was in flight has not run yet;
+            // without this it would wait for the next track() call, which on
+            // an idle connection never comes.
+            if (this.flushQueued && this.pendingBytes() > 0 && !this.closed) {
+                this.flushQueued = false;
+                this.scheduleFlush();
+            }
         }
     }
 }

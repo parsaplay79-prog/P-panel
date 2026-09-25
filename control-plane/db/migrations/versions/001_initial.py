@@ -470,3 +470,35 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS trg_usage_events_aggregate ON usage_events")
     op.execute("DROP FUNCTION IF EXISTS fn_usage_event_aggregate()")
+
+    # Every table this migration created, children before parents so the
+    # foreign keys don't block the drops. Previously only the trigger and its
+    # function were dropped, so `alembic downgrade base` left all 21 tables
+    # behind while alembic's version table said "000" — the next `upgrade` hit
+    # "relation already exists" and the migration history claimed to be at
+    # base when it was not. Destructive by nature: that is what a downgrade of
+    # the initial schema is.
+    for table in (
+        "usage_events",
+        "usage_daily_aggregates",
+        "subscription_activations",
+        "configuration_active_sessions",
+        "configuration_node_assignments",
+        "node_health_samples",
+        "notifications_log",
+        "audit_log",
+        "telegram_bot_state",
+        "gaming_profiles",
+        "pool_nodes",
+        "payment_proofs",
+        "payment_attempts",
+        "orders",
+        "configurations",
+        "nodes",
+        "pools",
+        "plans",
+        "customers",
+        "admins",
+        "cloudflare_accounts",
+    ):
+        op.execute(f"DROP TABLE IF EXISTS {table} CASCADE")

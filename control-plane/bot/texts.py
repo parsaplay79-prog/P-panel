@@ -39,12 +39,6 @@ MSG_HELP = (
     "لینک اشتراک را در برنامه‌ای مانند Hiddify ، Streisand یا v2rayNG وارد کنید و «به‌روزرسانی» بزنید."
 )
 
-MSG_SUPPORT = (
-    "🆘 <b>پشتیبانی</b>\n\n"
-    "برای پیگیری سفارش‌ها و سوالات، همین‌جا پیام بگذارید؛ "
-    "در اولین فرصت پاسخ می‌دهیم."
-)
-
 MSG_ENTER_DISPLAY_NAME = (
     "📝 یک <b>نام نمایشی</b> برای کانفیگ خود بفرستید.\n\n"
     "قوانین: حداکثر ۲۰ حرف، فقط حروف انگلیسی/فارسی و اعداد.\n"
@@ -117,7 +111,46 @@ MSG_TRIAL_OK = (
 
 MSG_TRIAL_EXISTS = "شما یک اشتراک آزمایشی فعال دارید. هر مشتری فقط یک تست می‌تواند داشته باشد."
 
+# Said once the lifetime allowance is spent, not merely while one is running.
+# Numbers are passed in so the copy can't drift from TEST_MAX_LIFETIME.
+MSG_TRIAL_LIMIT = (
+    "سقف تست شما پر شده است ({used} از {cap}).\n\n"
+    "اشتراک آزمایشی برای آشنایی با سرویس است و محدودیت lifetime دارد. "
+    "برای دسترسی نامحدود، یکی از طرح‌های اشتراک را انتخاب کنید."
+)
+
 MSG_SUB_LINK = "🔗 لینک اشتراک شما:\n\n<code>{link}</code>\n\nاین لینک را در برنامه‌ی کلاینت وارد کنید."
+
+# ---------------------------------------------------------------------------
+# Configuration rename
+# ---------------------------------------------------------------------------
+
+BTN_RENAME = "✏️ تغییر نام"
+
+MSG_CONFIG_ACTIONS = (
+    "⚙️ <b>{display_name}</b>\n\n"
+    "وضعیت: {status_fa}\n"
+    "حجم مصرفی: {used} از {quota}\n"
+    "انقضا: {expires}"
+)
+
+MSG_RENAME_ASK = (
+    "📝 نام نمایشی جدید را بفرستید.\n\n"
+    "قوانین: حداکثر ۲۰ حرف، فقط حروف انگلیسی/فارسی و اعداد.\n"
+    "پسوند یکتای کانفیگ شما تغییر نمی‌کند "
+    "(مثلاً <code>{old_name}_{suffix}</code> → <code>نامجدید_{suffix}</code>)."
+)
+
+MSG_RENAME_DONE = (
+    "✅ نام کانفیگ شما به <b>{display_name}</b> تغییر کرد.\n"
+    "پسوند <code>{suffix}</code> بدون تغییر ماند؛ لینک اشتراک شما هم "
+    "تغییری نکرده است."
+)
+
+MSG_RENAME_FAILED_TAKEN = "❌ این نام با پسوند فعلی شما قبلاً استفاده شده است. نام دیگری بفرستید:"
+MSG_RENAME_FAILED_INVALID = "❌ نام نامعتبر است. فقط حروف و اعداد، حداکثر ۲۰ حرف. دوباره بفرستید:"
+MSG_RENAME_CANCELLED = "تغییر نام لغو شد."
+MSG_CONFIG_NOT_FOUND = "❌ کانفیگ موردنظر پیدا نشد."
 
 # ---------------------------------------------------------------------------
 # Admin
@@ -141,6 +174,82 @@ ADMIN_REVIEW_PAYMENT = (
 )
 
 MSG_ADMIN_NOTIFY_NEW_ORDER = "🔔 سفارش جدید در انتظار بررسی است."
+
+# ---------------------------------------------------------------------------
+# Support tickets
+# ---------------------------------------------------------------------------
+
+MSG_SUPPORT = (
+    "🆘 <b>پشتیبانی</b>\n\n"
+    "پیام خود را بفرستید؛ تیکت شما ثبت می‌شود و پاسخ همین‌جا اعلام می‌شود.\n"
+    "اگر تیکت باز دارید، پیام جدید شما به همان تیکت اضافه می‌شود."
+)
+
+MSG_SUPPORT_ASK = "پیام خود را بنویسید. برای انصراف /cancel را بفرستید."
+
+MSG_SUPPORT_TICKET_OPENED = (
+    "✅ تیکت شما ثبت شد.\n"
+    "شماره تیکت: <code>{ref}</code>\n\n"
+    "پاسخ پشتیبانی همین‌جا اعلام می‌شود."
+)
+
+MSG_SUPPORT_NO_TICKETS = "تیکت بازی ندارید. برای ثبت تیکت جدید پیام بفرستید."
+
+MSG_SUPPORT_TICKETS_HEADER = "🎫 <b>تیکت‌های شما</b>\n"
+
+MSG_SUPPORT_TICKET_ITEM = (
+    "\n▫️ <code>{ref}</code> — {status_fa} ({updated})\n"
+    "پیام شما: {preview}"
+)
+
+MSG_SUPPORT_CANCELLED = "ثبت تیکت لغو شد."
+
+MSG_SUPPORT_TICKET_CLOSED_NOTICE = (
+    "این تیکت بسته شده بود؛ پیام شما آن را دوباره باز کرد.\n"
+    "شماره تیکت: <code>{ref}</code>"
+)
+
+MSG_SUPPORT_ADMIN_NEW = (
+    "🆘 <b>تیکت جدید</b>\n\n"
+    "مشتری: {customer}\n"
+    "شناسه تلگرام: <code>{tg_id}</code>\n"
+    "تیکت: <code>{ref}</code>\n\n"
+    "{body}"
+)
+
+MSG_SUPPORT_ADMIN_REPLY_PROMPT = "پاسخ خود را برای تیکت <code>{ref}</code> بنویسید:"
+
+MSG_SUPPORT_ADMIN_REPLIED = "پاسخ شما ارسال شد و تیکت <code>{ref}</code> به‌روزرسانی شد."
+
+MSG_SUPPORT_ADMIN_NO_TICKETS = "تیکت بازی وجود ندارد."
+
+MSG_SUPPORT_ADMIN_TICKETS_HEADER = "🎫 <b>تیکت‌های پشتیبانی</b>\n"
+
+MSG_SUPPORT_ADMIN_TICKET_ITEM = (
+    "\n▫️ <code>{ref}</code> — {status_fa} ({updated})\n"
+    "مشتری: {customer} (<code>{tg_id}</code>)"
+)
+
+MSG_SUPPORT_ADMIN_TICKET_ANSWER = (
+    "💬 <b>تیکت {ref}</b>\n"
+    "وضعیت: {status_fa}\n\n"
+    "{transcript}"
+)
+
+MSG_SUPPORT_ADMIN_TRANSCRIPT_ITEM = (
+    "\n— <b>{author}</b> ({when}):\n{body}"
+)
+
+MSG_SUPPORT_ADMIN_TICKET_NOT_FOUND = "تیکتی با این شماره پیدا نشد."
+
+MSG_SUPPORT_ADMIN_CLOSED = "تیکت <code>{ref}</code> بسته شد."
+
+# support ticket status → Persian
+SUPPORT_STATUS_FA = {
+    "open": "در انتظار پاسخ",
+    "answered": "پاسخ داده شده",
+    "closed": "بسته شده",
+}
 
 MSG_ADMIN_FORBIDDEN = "⛔️ این عملیات برای نقش شما مجاز نیست."
 

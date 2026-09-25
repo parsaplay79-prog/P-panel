@@ -8,3 +8,10 @@ node-worker/dist/
 node-worker/.wrangler/
 
 *.log
+
+# graphify output: a generated knowledge graph + its AST/semantic cache, not
+# project source. Regenerable, and the cache alone is ~58 files.
+graphify-out/
+
+# Local harness/agent settings, per-checkout.
+.claude/

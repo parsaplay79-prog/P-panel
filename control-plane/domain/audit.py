@@ -23,17 +23,21 @@ async def audit(
     target_id: str | None = None,
     details: dict | None = None,
 ) -> None:
-    import json
-
     try:
         db.add(
             AuditLog(
                 actor_type=actor_type,
                 actor_id=actor_id,
                 action=action,
-                target_type=target_type,
+                target_type=target_type or "",
                 target_id=target_id,
-                details_json=json.dumps(details or {}, ensure_ascii=False),
+                # The dict, NOT json.dumps(...). details_json is a JSONB
+                # column: SQLAlchemy serializes it itself, so passing an
+                # already-encoded string stores a JSON *string*
+                # ("{\"order_id\":...}") instead of a JSON object. Everything
+                # downstream — `details_json->>'key'` in SQL, or a reader
+                # doing row.details_json["key"] — then silently returns NULL.
+                details_json=details or {},
             )
         )
         await db.commit()

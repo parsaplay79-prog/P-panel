@@ -5,10 +5,17 @@ This job catches drift (manual rows, partial writes): for every
 (config, date) present in the ledger, it recomputes the exact daily sums and
 upserts them — the aggregate table is always repairable from the append-only
 ledger, never the other way around.
+
+COST: the ledger is append-only and never pruned, so an unbounded GROUP BY
+re-derives every day since the platform launched, every five minutes, to find
+nothing — the read cost grows forever while the write cost is zero after the
+first pass. The scan is therefore bounded to a recent window by default, and
+the worker does an unbounded pass once a day so a row corrupted by hand is
+still repaired eventually.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, text as sql_text
 
@@ -17,23 +24,36 @@ from db.models import UsageDailyAggregate, UsageEvent
 
 logger = logging.getLogger("verdent.reconcile")
 
+RECONCILE_LOOKBACK_DAYS = 7
 
-async def reconcile_usage() -> dict:
+
+async def reconcile_usage(*, since: date | None = None) -> dict:
+    """Re-derive daily aggregates from the ledger.
+
+    `since` bounds the scan to ledger rows reported on or after that date;
+    None means a full pass.
+    """
     async with SessionLocal() as db:
         # exact truth from the ledger
-        truth = (
-            await db.execute(
-                select(
-                    UsageEvent.configuration_id,
-                    sql_text("(usage_events.reported_at AT TIME ZONE 'UTC')::date AS usage_date"),
-                    sql_text("COALESCE(SUM(usage_events.bytes_up), 0) AS up"),
-                    sql_text("COALESCE(SUM(usage_events.bytes_down), 0) AS down"),
-                ).group_by(
-                    UsageEvent.configuration_id,
-                    sql_text("(usage_events.reported_at AT TIME ZONE 'UTC')::date"),
-                )
+        query = (
+            select(
+                UsageEvent.configuration_id,
+                sql_text("(usage_events.reported_at AT TIME ZONE 'UTC')::date AS usage_date"),
+                sql_text("COALESCE(SUM(usage_events.bytes_up), 0) AS up"),
+                sql_text("COALESCE(SUM(usage_events.bytes_down), 0) AS down"),
             )
-        ).all()
+            .group_by(
+                UsageEvent.configuration_id,
+                sql_text("(usage_events.reported_at AT TIME ZONE 'UTC')::date"),
+            )
+        )
+        if since is not None:
+            query = query.where(
+                UsageEvent.reported_at
+                >= datetime(since.year, since.month, since.day, tzinfo=timezone.utc)
+            )
+
+        truth = (await db.execute(query)).all()
 
         repaired = 0
         for config_id, usage_date, up, down in truth:
@@ -69,7 +89,7 @@ async def reconcile_usage() -> dict:
 
         await db.commit()
 
-    result = {"ledger_groups": len(truth), "repaired": repaired}
+    result = {"ledger_groups": len(truth), "repaired": repaired, "since": str(since) if since else "full"}
     if repaired:
         logger.info("reconciled %d aggregate row(s)", repaired)
     return result

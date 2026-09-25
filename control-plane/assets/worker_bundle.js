@@ -225,29 +225,43 @@ var UsageTracker = class {
     }
     this.flushing = true;
     this.flushQueued = false;
+    const bytesUp = this.bytesUp;
+    const bytesDown = this.bytesDown;
+    const windowStartedAt = this.windowStartedAt;
+    if (bytesUp === 0 && bytesDown === 0) {
+      this.flushing = false;
+      return;
+    }
+    const event = {
+      configId: this.configId,
+      connectionId: this.connectionId,
+      // The number this slice WILL have. It is only committed on
+      // success (see below): a retry must reuse the same number so the
+      // server's (connectionId, sequenceNumber) key can recognise it.
+      // Advancing it up front would make every retry look like new
+      // traffic and double-count the same bytes.
+      sequenceNumber: this.sequenceNumber + 1,
+      bytesUp,
+      bytesDown,
+      windowStartedAt: new Date(windowStartedAt).toISOString(),
+      reportedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
     try {
-      const bytesUp = this.bytesUp;
-      const bytesDown = this.bytesDown;
-      const windowStartedAt = this.windowStartedAt;
-      this.bytesUp = 0;
-      this.bytesDown = 0;
+      await postUsageEvent(this.env, event);
+      this.sequenceNumber = event.sequenceNumber;
+      this.bytesUp -= bytesUp;
+      this.bytesDown -= bytesDown;
       this.windowStartedAt = Date.now();
       this.lastFlushAt = Date.now();
-      if (bytesUp === 0 && bytesDown === 0) return;
-      const event = {
-        configId: this.configId,
-        connectionId: this.connectionId,
-        sequenceNumber: ++this.sequenceNumber,
-        bytesUp,
-        bytesDown,
-        windowStartedAt: new Date(windowStartedAt).toISOString(),
-        reportedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await postUsageEvent(this.env, event);
     } catch (error) {
-      console.error("Usage flush failed:", error);
+      console.error("Usage flush failed, bytes retained for retry:", error);
+      this.lastFlushAt = Date.now();
     } finally {
       this.flushing = false;
+      if (this.flushQueued && this.pendingBytes() > 0 && !this.closed) {
+        this.flushQueued = false;
+        this.scheduleFlush();
+      }
     }
   }
 };
@@ -329,7 +343,9 @@ import { connect } from "cloudflare:sockets";
 
 // src/cores/utils.ts
 async function resolveDNS(domain, onlyIPv4 = false) {
-  const dohBaseURL = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}`;
+  const { dohUrl } = getGlobals();
+  const dohBase = (dohUrl || "https://cloudflare-dns.com/dns-query").split("?")[0];
+  const dohBaseURL = `${dohBase}?name=${encodeURIComponent(domain)}`;
   const dohURLs = {
     ipv4: `${dohBaseURL}&type=A`,
     ipv6: `${dohBaseURL}&type=AAAA`
@@ -606,6 +622,16 @@ async function TrOverWSHandler(request, env, ctx) {
       if (parsed.hasError || !parsed.configId) {
         throw new Error(parsed.message);
       }
+      const admittedNow = await incrSession(
+        env,
+        parsed.configId,
+        parsed.deviceLimit ?? 1,
+        ctx
+      );
+      if (!admittedNow) {
+        log("device limit reached");
+        throw new Error("device limit reached");
+      }
       admitted = true;
       userConfigId = parsed.configId;
       tracker = new UsageTracker(parsed.configId, env, ctx);
@@ -656,12 +682,6 @@ async function parseTrHeader(buffer, env, ctx, log) {
     log("invalid password");
     return { hasError: true, message: "invalid password" };
   }
-  const deviceLimit = user.deviceLimit ?? 1;
-  const admitted = await incrSession(env, user.configId, deviceLimit, ctx);
-  if (!admitted) {
-    log("device limit reached");
-    return { hasError: true, message: "device limit reached" };
-  }
   const socks5DataBuffer = buffer.slice(crLfIndex + 2);
   if (socks5DataBuffer.byteLength < 6) {
     return { hasError: true, message: "invalid SOCKS5 request data" };
@@ -709,7 +729,8 @@ async function parseTrHeader(buffer, env, ctx, log) {
     addressRemote: address,
     portRemote,
     rawClientData: socks5DataBuffer.slice(portIndex + 4),
-    configId: user.configId
+    configId: user.configId,
+    deviceLimit: user.deviceLimit ?? 1
   };
 }
 
@@ -754,6 +775,16 @@ async function VlOverWSHandler(request, env, ctx) {
       if (parsed.hasError || !parsed.configId) {
         throw new Error(parsed.message);
       }
+      const admittedNow = await incrSession(
+        env,
+        parsed.configId,
+        parsed.deviceLimit ?? 1,
+        ctx
+      );
+      if (!admittedNow) {
+        log("device limit reached");
+        throw new Error("device limit reached");
+      }
       admitted = true;
       userConfigId = parsed.configId;
       tracker = new UsageTracker(parsed.configId, env, ctx);
@@ -762,7 +793,7 @@ async function VlOverWSHandler(request, env, ctx) {
       if (parsed.isUDP) {
         if (parsed.portRemote === 53) {
           isDns = true;
-          const { write } = await handleUDPOutBound(webSocket, VLResponseHeader, log);
+          const { write } = await handleUDPOutBound(webSocket, VLResponseHeader, log, tracker);
           udpStreamWrite = write;
           await udpStreamWrite(rawClientData);
           return;
@@ -811,12 +842,6 @@ async function parseVlHeader(VLBuffer, env, ctx, log) {
   if (!user) {
     log("invalid user");
     return { hasError: true, message: "invalid user" };
-  }
-  const deviceLimit = user.deviceLimit ?? 1;
-  const admitted = await incrSession(env, user.configId, deviceLimit, ctx);
-  if (!admitted) {
-    log("device limit reached");
-    return { hasError: true, message: "device limit reached" };
   }
   const optLength = new Uint8Array(VLBuffer.slice(17, 18))[0];
   const command = new Uint8Array(VLBuffer.slice(18 + optLength, 18 + optLength + 1))[0];
@@ -878,7 +903,8 @@ async function parseVlHeader(VLBuffer, env, ctx, log) {
     rawDataIndex: addressValueIndex + addressLength,
     VLVersion,
     isUDP,
-    configId: user.configId
+    configId: user.configId,
+    deviceLimit: user.deviceLimit ?? 1
   };
 }
 function unsafeStringify(arr, offset = 0) {
@@ -895,7 +921,7 @@ function stringify(arr, offset = 0) {
   }
   return uuid;
 }
-async function handleUDPOutBound(webSocket, VLResponseHeader, log) {
+async function handleUDPOutBound(webSocket, VLResponseHeader, log, tracker = null) {
   let isVLHeaderSent = false;
   const transformStream = new TransformStream({
     start(_controller) {
@@ -915,7 +941,10 @@ async function handleUDPOutBound(webSocket, VLResponseHeader, log) {
   transformStream.readable.pipeTo(
     new WritableStream({
       async write(chunk) {
-        const resp = await fetch("https://cloudflare-dns.com/dns-query", {
+        if (tracker) tracker.trackUp(chunk.byteLength);
+        const { dohUrl } = getGlobals();
+        const dnsEndpoint = (dohUrl || "https://cloudflare-dns.com/dns-query").split("?")[0];
+        const resp = await fetch(dnsEndpoint, {
           method: "POST",
           headers: {
             "content-type": "application/dns-message"
@@ -924,6 +953,7 @@ async function handleUDPOutBound(webSocket, VLResponseHeader, log) {
         });
         const dnsQueryResult = await resp.arrayBuffer();
         const udpSize = dnsQueryResult.byteLength;
+        if (tracker) tracker.trackDown(udpSize);
         const udpSizeBuffer = new Uint8Array([udpSize >> 8 & 255, udpSize & 255]);
         if (webSocket.readyState === WS_READY_STATE_OPEN) {
           log(`doh success and dns message length is ${udpSize}`);

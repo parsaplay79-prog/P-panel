@@ -28,7 +28,7 @@ from db.models import (
     UsageDailyAggregate,
 )
 from domain.config import settings
-from domain.naming import create_unique_config_name_pair
+from domain.naming import create_unique_config_name_pair, validate_display_name
 
 
 class SubscriptionError(Exception):
@@ -102,18 +102,22 @@ async def create_configuration_for_order(
     return config
 
 
-async def extend_configuration(
-    db: AsyncSession, config: Configuration, plan: Plan
-) -> Configuration:
-    """Renewal: extend from max(now, current expiry) — renewing early never
-    loses remaining days."""
-    now = datetime.now(timezone.utc)
-    base = max(config.expires_at or now, now)
-    config.expires_at = base + timedelta(days=plan.duration_days)
-    if config.status == "EXPIRED":
-        config.status = "ACTIVE"
-    await db.commit()
-    return config
+# Renewal is intentionally NOT implemented (decision 2026-09-25: ship without
+# it, add it later if wanted). An earlier version had extend_configuration()
+# here, and it was wrong in two ways that are hard to see:
+#
+#   * it flipped status back to ACTIVE but never re-enabled the edge
+#     credential in the node's KV map — so the customer would be billed for a
+#     subscription whose proxy stayed switched off, and nothing anywhere else
+#     re-enables that KV entry, making the divergence permanent;
+#   * renewing a config that had been deliberately disabled (suspended, or cut
+#     by the quota sweep) silently brought it back, turning an enforcement
+#     decision into free service.
+#
+# If renewal returns it must set the status AND the edge KV entry in one
+# operation, and must refuse to revive a config a human or the sweep disabled.
+# The usage period is derived (expires_at - plan.duration_days) precisely so a
+# future renewal can reset consumption with no schema change — keep that.
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +125,21 @@ async def extend_configuration(
 # ---------------------------------------------------------------------------
 
 
-async def usage_current_period(db: AsyncSession, config: Configuration) -> tuple[int, int | None]:
-    """(used_bytes, quota_bytes|None). Period start = expiry minus plan
-    duration, so renewals reset consumption without a schema change."""
+async def usage_current_period_detail(
+    db: AsyncSession, config: Configuration
+) -> tuple[int, int, int, int | None]:
+    """(used, bytes_up, bytes_down, quota|None) for the current period.
+
+    Period start = expiry minus plan duration, so renewals reset consumption
+    without a schema change.
+
+    Up and down are returned separately because the ledger and the daily
+    aggregate both carry them separately, and `subscription-userinfo` is
+    specified per-direction: clients (v2rayN, Clash, sing-box) draw two bars
+    and add them up for their own total. Publishing the period TOTAL in both
+    fields made every client report double the real traffic — and the more a
+    customer used, the more wrong it got.
+    """
     quota: int | None = None
     period_start = config.created_at
 
@@ -136,18 +152,88 @@ async def usage_current_period(db: AsyncSession, config: Configuration) -> tuple
             if config.expires_at:
                 period_start = config.expires_at - timedelta(days=plan.duration_days)
 
-    row = (
+    rows = (
         await db.execute(
-            select(UsageDailyAggregate)
-            .where(
+            select(UsageDailyAggregate).where(
                 UsageDailyAggregate.configuration_id == config.id,
                 UsageDailyAggregate.usage_date >= period_start.date(),
             )
         )
     ).scalars().all()
 
-    used = sum(a.total_bytes for a in row)
+    bytes_up = sum(a.bytes_up for a in rows)
+    bytes_down = sum(a.bytes_down for a in rows)
+    return bytes_up + bytes_down, bytes_up, bytes_down, quota
+
+
+async def usage_current_period(db: AsyncSession, config: Configuration) -> tuple[int, int | None]:
+    """(used_bytes, quota_bytes|None) — the total, for quota math and display.
+    Callers that emit per-direction numbers use usage_current_period_detail."""
+    used, _up, _down, quota = await usage_current_period_detail(db, config)
     return used, quota
+
+
+class RenameError(SubscriptionError):
+    """A rename that must be refused, carrying a machine-readable reason.
+
+    A plain string comparison on the message would make the router depend on
+    the wording; the reason is an attribute instead so the bot can map it to
+    the right Persian text.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+RENAME_INVALID_NAME = "invalid_display_name"
+RENAME_NAME_TAKEN = "display_name_taken"
+
+
+async def rename_configuration(
+    db: AsyncSession, config: Configuration, new_display_name: str
+) -> Configuration:
+    """Change a configuration's display name, keeping its suffix.
+
+    The suffix is deliberately NOT re-minted. It is the platform's half of an
+    identity the customer has already been shown and may have written down
+    ("Parsa_A3F2K"), and the guarantee they were sold is that the full
+    `{display_name}_{suffix}` string is unique — not that the name is
+    permanent. Re-minting on every rename would silently change the label in
+    their client for a reason they did not ask for.
+
+    Uniqueness is therefore re-checked against the (display_name, suffix)
+    index rather than assumed: keeping the suffix means a rename CAN collide
+    with an existing config that already holds that exact pair, and letting
+    the INSERT fail would surface as an unhandled IntegrityError.
+    """
+    new_name = (new_display_name or "").strip()
+
+    if not validate_display_name(new_name):
+        raise RenameError(RENAME_INVALID_NAME)
+
+    if new_name == config.display_name:
+        # Idempotent, not an error: re-submitting the same name is what a
+        # customer does after a double-tap, and telling them it failed would
+        # be wrong.
+        return config
+
+    taken = (
+        await db.execute(
+            select(Configuration.id).where(
+                Configuration.display_name == new_name,
+                Configuration.suffix == config.suffix,
+                Configuration.id != config.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if taken is not None:
+        raise RenameError(RENAME_NAME_TAKEN)
+
+    config.display_name = new_name
+    await db.commit()
+    await db.refresh(config)
+    return config
 
 
 async def active_assignments(db: AsyncSession, config: Configuration) -> list[tuple[ConfigurationNodeAssignment, Node]]:

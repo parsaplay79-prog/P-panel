@@ -4,6 +4,7 @@
 // resolution and address parsing.
 
 import { safeError } from '@common';
+import { getGlobals } from '@settings';
 
 interface DnsResult {
     ipv4: string[];
@@ -11,7 +12,19 @@ interface DnsResult {
 }
 
 export async function resolveDNS(domain: string, onlyIPv4 = false): Promise<DnsResult> {
-    const dohBaseURL = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}`;
+    // Verdent fork: the DoH resolver is the Node's configured one, not a
+    // hardcoded Cloudflare endpoint. A gaming profile's `doh_endpoint` is
+    // pushed down at provisioning time (provisioned.dohUrl); hardcoding here
+    // made that setting dead — the profile could name any resolver and this
+    // path would still call cloudflare-dns.com, so the DNS behaviour the
+    // gaming plans are sold on was not actually configurable.
+    //
+    // Anything after a `?` is dropped: the query is built here, and an
+    // operator-supplied URL that already carries parameters would otherwise
+    // produce `...?name=..&type=A&name=..`.
+    const { dohUrl } = getGlobals();
+    const dohBase = (dohUrl || 'https://cloudflare-dns.com/dns-query').split('?')[0];
+    const dohBaseURL = `${dohBase}?name=${encodeURIComponent(domain)}`;
     const dohURLs = {
         ipv4: `${dohBaseURL}&type=A`,
         ipv6: `${dohBaseURL}&type=AAAA`,

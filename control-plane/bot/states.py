@@ -16,4 +16,25 @@ class AdminFlow(StatesGroup):
 
 
 class Support(StatesGroup):
+    """Customer side. The ticket is resolved from the customer row at message
+    time rather than remembered in FSM data: FSM storage is per-chat and can be
+    dropped, whereas "this customer has an open ticket" is a fact about the
+    database that survives a restart."""
     waiting_user_message = State()
+
+
+class SupportAdmin(StatesGroup):
+    """Admin side. The ticket ref IS kept in FSM data here — an admin can be
+    replying to any ticket in the queue, so there is no customer row to
+    resolve the target from."""
+    waiting_reply = State()
+
+
+class ConfigEdit(StatesGroup):
+    """Customer renaming one of their own configurations.
+
+    The config id is held in FSM data. That is safe here only because the
+    handler re-checks ownership against the caller's customer row before
+    writing — a stale or tampered id must never be enough on its own.
+    """
+    waiting_new_name = State()

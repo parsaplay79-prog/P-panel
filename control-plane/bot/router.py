@@ -22,6 +22,7 @@ from aiogram.types import (
     Message,
     PreCheckoutQuery,
 )
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
 from bot import keyboards, states, texts
@@ -31,12 +32,17 @@ from db.models import (
     Admin,
     Configuration,
     ConfigurationNodeAssignment,
+    Customer,
     Node,
     Order,
     PaymentAttempt,
     Plan,
+    SupportMessage,
+    SupportTicket,
 )
 from domain import fulfillment, naming, rbac
+from domain import support as support_domain
+from domain.audit import audit
 from domain.config import settings
 from domain.orders import (
     attach_payment_proof,
@@ -46,7 +52,12 @@ from domain.orders import (
     mark_order_provisioning,
     reject_payment,
 )
-from domain.subscriptions import subscription_url
+from domain.subscriptions import (
+    RENAME_NAME_TAKEN,
+    RenameError,
+    rename_configuration as subscription_rename,
+    subscription_url,
+)
 
 logger = logging.getLogger("verdent.bot")
 
@@ -108,9 +119,144 @@ async def cb_help(call: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "menu:support")
 async def cb_support(call: CallbackQuery, state: FSMContext):
+    """Support menu: existing tickets, or start a new one.
+
+    This used to print static text and stop. Anything the customer typed next
+    was silently discarded, so the flow looked complete and was not.
+    """
     await state.clear()
-    await call.message.answer(texts.MSG_SUPPORT, reply_markup=MENU_BACK_KB)
+    async with SessionLocal() as db:
+        customer = await get_or_create_customer(
+            db,
+            telegram_user_id=call.from_user.id,
+            username=call.from_user.username,
+            display_name=call.from_user.full_name,
+        )
+        tickets = await support_domain.customer_tickets(db, customer.id)
+
+    if tickets:
+        await call.message.answer(
+            texts.MSG_SUPPORT, reply_markup=keyboards.customer_tickets(tickets)
+        )
+    else:
+        await call.message.answer(
+            texts.MSG_SUPPORT, reply_markup=MENU_BACK_KB
+        )
+
+    await state.set_state(states.Support.waiting_user_message)
     await call.answer()
+
+@router.callback_query(F.data.startswith("sup:open:"))
+async def cb_support_open_ticket(call: CallbackQuery, state: FSMContext):
+    """Refill the box on an existing ticket — a follow-up goes to the same
+    thread rather than silently starting a second, disconnected one."""
+    ref = call.data.split(":")[2]
+    await state.set_state(states.Support.waiting_user_message)
+    await state.update_data(ticket_ref=ref)
+    await call.answer()
+
+@router.message(states.Support.waiting_user_message)
+async def on_support_message(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.startswith("/cancel"):
+        await state.clear()
+        await message.answer(texts.MSG_SUPPORT_CANCELLED)
+        return
+    if not text:
+        await message.answer(texts.MSG_SUPPORT_ASK)
+        return
+
+    data = await state.get_data()
+    target_ref = data.get("ticket_ref")
+    # Any message typed in this state means "I've finished reading the list" —
+    # the ref must not survive into the next message, or a later unrelated
+    # message would be appended to whatever ticket the button referred to.
+    await state.clear()
+
+    async with SessionLocal() as db:
+        customer = await get_or_create_customer(
+            db,
+            telegram_user_id=message.from_user.id,
+            username=message.from_user.username,
+            display_name=message.from_user.full_name,
+        )
+        # Scoped to THIS customer's tickets, so a ref can only ever resolve to
+        # a thread they own.
+        tickets = await support_domain.customer_tickets(db, customer.id)
+        ticket = _match_ticket(tickets, target_ref) or _open_ticket(tickets)
+
+        reopened = False
+        if ticket is None:
+            ticket = await support_domain.create_ticket(
+                db, customer.id, message.from_user.id, text
+            )
+        else:
+            reopened = ticket.status == support_domain.STATUS_CLOSED
+            ticket = await support_domain.add_message(
+                db, ticket, "customer", message.from_user.id, text
+            )
+
+        ref = support_domain.ticket_ref(ticket.id)
+        customer_name = message.from_user.full_name
+        tg_id = message.from_user.id
+
+    if reopened:
+        await message.answer(
+            texts.MSG_SUPPORT_TICKET_CLOSED_NOTICE.format(ref=ref)
+        )
+    await message.answer(
+        texts.MSG_SUPPORT_TICKET_OPENED.format(ref=ref)
+    )
+    # After the confirmation, and never inline: Telegram renders whatever the
+    # handler manages to send, and a failed admin notification must not cost
+    # the customer their ticket id. This also guarantees the reply lands
+    # before the admin ping even when the ping throws.
+    await _notify_admins_new_ticket(ref, customer_name, tg_id, text)
+
+
+def _open_ticket(tickets: list):
+    """The ticket a new message should continue, or None to start fresh.
+
+    Only `open` counts. Continuing a ticket the admin already answered would
+    bury the answer under a new question with no signal that it is unanswered.
+    """
+    for t in tickets:
+        if t.status == support_domain.STATUS_OPEN:
+            return t
+    return None
+
+
+async def _notify_admins_new_ticket(
+    ref: str, customer: str, tg_id: int, body: str
+) -> None:
+    """Tell admins a ticket exists.
+
+    Without this the ticket is a row nobody looks at — the same as the old
+    static text, just with better bookkeeping.
+    """
+    from bot.webhook import send_message
+
+    async with SessionLocal() as db:
+        admins = (await db.execute(select(Admin))).scalars().all()
+        targets = [
+            a.telegram_user_id
+            for a in admins
+            if rbac.PERM_SUPPORT_MANAGE in rbac.permissions_for(a.role)
+        ]
+
+    for admin_id in targets:
+        try:
+            await send_message(
+                admin_id,
+                texts.MSG_SUPPORT_ADMIN_NEW.format(
+                    customer=customer or "—",
+                    tg_id=tg_id,
+                    ref=ref,
+                    body=body,
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to notify admin %s of ticket %s", admin_id, ref)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +513,11 @@ async def cb_my_configs(call: CallbackQuery, state: FSMContext):
                 )
             )
 
-        await call.message.answer("\n".join(chunks), reply_markup=MENU_BACK_KB, disable_web_page_preview=True)
+        await call.message.answer(
+            "\n".join(chunks),
+            reply_markup=keyboards.my_configs(configs),
+            disable_web_page_preview=True,
+        )
     await call.answer()
 
 
@@ -390,6 +540,19 @@ async def cb_trial(call: CallbackQuery, state: FSMContext):
             await call.answer()
             return
 
+        # Lifetime cap is checked before node selection so a customer who has
+        # used both tests isn't told "no capacity" when capacity is fine.
+        lifetime = await test_configs.count_lifetime_test_configs(db, customer.id)
+        if lifetime >= test_configs.TEST_MAX_LIFETIME:
+            await call.message.answer(
+                texts.MSG_TRIAL_LIMIT.format(
+                    used=lifetime, cap=test_configs.TEST_MAX_LIFETIME
+                ),
+                reply_markup=MENU_BACK_KB,
+            )
+            await call.answer()
+            return
+
         pool = (
             await db.execute(
                 select(__import__("db.models", fromlist=["Pool"]).Pool).limit(1)
@@ -405,12 +568,26 @@ async def cb_trial(call: CallbackQuery, state: FSMContext):
             await call.answer()
             return
 
-        config = await test_configs.create_test_config(
-            db,
-            customer_id=customer.id,
-            display_name=f"test-{call.from_user.username or call.from_user.id}",
-            node=node,
-        )
+        try:
+            config = await test_configs.create_test_config(
+                db,
+                customer_id=customer.id,
+                display_name=f"test-{call.from_user.username or call.from_user.id}",
+                node=node,
+            )
+        except test_configs.TestConfigLimitError as exc:
+            # A concurrent double-tap can still win the race between the check
+            # above and this insert; report the cap rather than a raw error.
+            await call.message.answer(
+                texts.MSG_TRIAL_LIMIT.format(used=exc.lifetime_count, cap=exc.cap),
+                reply_markup=MENU_BACK_KB,
+            )
+            await call.answer()
+            return
+        except RuntimeError:
+            await call.message.answer(texts.MSG_TRIAL_EXISTS, reply_markup=MENU_BACK_KB)
+            await call.answer()
+            return
 
         await call.message.answer(
             texts.MSG_TRIAL_OK.format(
@@ -423,18 +600,152 @@ async def cb_trial(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+async def _own_config(db, telegram_user_id: int, config_id: str) -> Configuration | None:
+    """The config only if it belongs to this Telegram user, else None.
+
+    Every cfg:* handler must go through this. The callback data carries the
+    config id, and callback data is client-supplied: without an ownership
+    check, any customer who learns or guesses another's id can read their
+    subscription link — which is the whole credential. Returning None for a
+    foreign id (rather than a distinct error) also avoids confirming that the
+    id exists.
+    """
+    if not config_id:
+        return None
+    customer = await get_or_create_customer(
+        db,
+        telegram_user_id=telegram_user_id,
+        username=None,
+        display_name=None,
+    )
+    return (
+        await db.execute(
+            select(Configuration).where(
+                Configuration.id == config_id,
+                Configuration.customer_id == customer.id,
+                Configuration.status != "DELETED",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+@router.callback_query(F.data.startswith("cfg:view:"))
+async def cb_config_view(call: CallbackQuery, state: FSMContext):
+    config_id = call.data.split(":")[2]
+    await state.clear()
+    async with SessionLocal() as db:
+        config = await _own_config(db, call.from_user.id, config_id)
+        if config is None:
+            await call.answer("یافت نشد", show_alert=True)
+            return
+        from domain.subscriptions import usage_current_period
+
+        used, quota = await usage_current_period(db, config)
+        body = texts.MSG_CONFIG_ACTIONS.format(
+            display_name=f"{config.display_name}_{config.suffix}",
+            status_fa=texts.STATUS_FA.get(config.status, config.status),
+            used=texts.format_traffic(used),
+            quota=texts.format_traffic(quota),
+            expires=config.expires_at.strftime("%Y-%m-%d") if config.expires_at else "—",
+        )
+
+    await call.message.answer(
+        body, reply_markup=keyboards.config_actions(config_id)
+    )
+    await call.answer()
+
+
 @router.callback_query(F.data.startswith("cfg:link:"))
 async def cb_config_link(call: CallbackQuery, state: FSMContext):
     config_id = call.data.split(":")[2]
     async with SessionLocal() as db:
-        config = (
-            await db.execute(select(Configuration).where(Configuration.id == config_id))
-        ).scalar_one_or_none()
+        # Was an unscoped id lookup: the handler returned any config's
+        # subscription link to whoever asked.
+        config = await _own_config(db, call.from_user.id, config_id)
     if config is None:
         await call.answer("یافت نشد", show_alert=True)
         return
     await call.message.answer(texts.MSG_SUB_LINK.format(link=subscription_url(config)))
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("cfg:rename:"))
+async def cb_config_rename(call: CallbackQuery, state: FSMContext):
+    config_id = call.data.split(":")[2]
+    async with SessionLocal() as db:
+        config = await _own_config(db, call.from_user.id, config_id)
+        if config is None:
+            await call.answer("یافت نشد", show_alert=True)
+            return
+        old_name, suffix = config.display_name, config.suffix
+
+    await state.set_state(states.ConfigEdit.waiting_new_name)
+    await state.update_data(config_id=config_id)
+    await call.message.answer(
+        texts.MSG_RENAME_ASK.format(old_name=old_name, suffix=suffix)
+    )
+    await call.answer()
+
+
+@router.message(states.ConfigEdit.waiting_new_name)
+async def on_config_rename(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.startswith("/cancel"):
+        await state.clear()
+        await message.answer(texts.MSG_RENAME_CANCELLED)
+        return
+
+    data = await state.get_data()
+    config_id = data.get("config_id")
+    # One rename per prompt: the id must not survive into the customer's next
+    # unrelated message, or that message would be applied as a rename.
+    await state.clear()
+
+    async with SessionLocal() as db:
+        # Re-checked here, not just at the button: ownership must hold at the
+        # moment of the write, not only when the prompt was shown.
+        config = await _own_config(db, message.from_user.id, config_id)
+        if config is None:
+            # Not MSG_NO_CONFIGS: that says "you have no subscriptions",
+            # which is wrong and alarming when the customer has others and
+            # merely renamed a config that has since been deleted.
+            await message.answer(texts.MSG_CONFIG_NOT_FOUND)
+            return
+
+        try:
+            config = await subscription_rename(db, config, text)
+        except RenameError as exc:
+            # Stay in the state so the customer can just retype, rather than
+            # making them find the button again for a typo.
+            await state.set_state(states.ConfigEdit.waiting_new_name)
+            await state.update_data(config_id=config_id)
+            if exc.reason == RENAME_NAME_TAKEN:
+                await message.answer(texts.MSG_RENAME_FAILED_TAKEN)
+            else:
+                await message.answer(texts.MSG_RENAME_FAILED_INVALID)
+            return
+
+        new_name, suffix = config.display_name, config.suffix
+        customer_id = config.customer_id
+
+    # Audited with actor_type="customer": the constraint was widened in
+    # migration 004 precisely so this record can exist. audit() swallows its
+    # own failures, so if 004 has not been applied this row silently does not
+    # appear rather than breaking the rename.
+    async with SessionLocal() as db:
+        await audit(
+            db,
+            "config.rename",
+            actor_type="customer",
+            actor_id=customer_id,
+            target_type="configuration",
+            target_id=config_id,
+            details={"display_name": new_name, "suffix": suffix},
+        )
+
+    await message.answer(
+        texts.MSG_RENAME_DONE.format(display_name=f"{new_name}_{suffix}", suffix=suffix)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +801,8 @@ async def cb_admin_panel(call: CallbackQuery, state: FSMContext):
         await call.message.answer("شناسه عددی تلگرام مشتری را بفرستید:")
     elif action == "nodes" and rbac.PERM_NODE_MANAGE in perms:
         await _show_nodes(call)
+    elif action == "tickets" and rbac.PERM_SUPPORT_MANAGE in perms:
+        await _show_support_tickets(call)
     else:
         await call.answer(texts.MSG_ADMIN_FORBIDDEN, show_alert=True)
         return
@@ -597,8 +910,19 @@ async def cb_review_approve(call: CallbackQuery, state: FSMContext):
 
     async with SessionLocal() as db:
         order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+        # FOR UPDATE, not a plain read. The status check below is
+        # check-then-act: two admins reviewing the same receipt (or one admin
+        # double-tapping) both read WAITING_REVIEW, both pass, and the payment
+        # is fulfilled TWICE — two configs and two KV credentials for one
+        # payment. The row lock serializes them: the second transaction blocks
+        # here until the first commits, then re-reads the row and sees the
+        # status it actually has.
         attempt = (
-            await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == attempt_id))
+            await db.execute(
+                select(PaymentAttempt)
+                .where(PaymentAttempt.id == attempt_id)
+                .with_for_update()
+            )
         ).scalar_one_or_none()
 
         if order is None or attempt is None or attempt.status != "WAITING_REVIEW":
@@ -682,8 +1006,16 @@ async def on_reject_reason(message: Message, state: FSMContext):
         return
 
     async with SessionLocal() as db:
+        # Same check-then-act as the approve path, and the same fix: without
+        # the row lock a reject racing an approve both see WAITING_REVIEW and
+        # the customer gets an approval AND a rejection message for one
+        # receipt. Locking here makes the two reviews strictly ordered.
         attempt = (
-            await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == attempt_id))
+            await db.execute(
+                select(PaymentAttempt)
+                .where(PaymentAttempt.id == attempt_id)
+                .with_for_update()
+            )
         ).scalar_one_or_none()
         if attempt is None or attempt.status != "WAITING_REVIEW":
             await message.answer("این سفارش قبلاً بررسی شده است.")
@@ -747,6 +1079,11 @@ async def _admin_create_test(message: Message, telegram_id: str):
                 node=node,
                 actor_id=str(message.from_user.id),
             )
+        except test_configs.TestConfigLimitError as exc:
+            await message.answer(
+                f"سقف تست این مشتری پر شده ({exc.lifetime_count}/{exc.cap})."
+            )
+            return
         except RuntimeError:
             await message.answer("این مشتری یک تست فعال دارد.")
             return
@@ -975,8 +1312,211 @@ async def on_successful_payment(message: Message, state: FSMContext):
 
 
 # ---------------------------------------------------------------------------
-# admin notification helper
+# admin: support tickets
 # ---------------------------------------------------------------------------
+
+async def _show_support_tickets(call: CallbackQuery):
+    async with SessionLocal() as db:
+        tickets = await support_domain.open_tickets(db)
+        if not tickets:
+            await call.message.answer(
+                texts.MSG_SUPPORT_ADMIN_NO_TICKETS, reply_markup=keyboards.back_to_main()
+            )
+            return
+
+        customers = {
+            c.id: c
+            for c in (await db.execute(select(Customer))).scalars().all()
+        }
+        chunks = [texts.MSG_SUPPORT_ADMIN_TICKETS_HEADER]
+        kb = InlineKeyboardBuilder()
+        for t in tickets:
+            ref = support_domain.ticket_ref(t.id)
+            cust = customers.get(t.customer_id)
+            chunks.append(
+                texts.MSG_SUPPORT_ADMIN_TICKET_ITEM.format(
+                    ref=ref,
+                    status_fa=texts.SUPPORT_STATUS_FA.get(t.status, t.status),
+                    updated=t.updated_at.strftime("%Y-%m-%d %H:%M"),
+                    customer=(cust.display_name or "—") if cust else "—",
+                    tg_id=cust.telegram_user_id if cust else "—",
+                )
+            )
+            kb.button(
+                text=f"{ref} — {texts.SUPPORT_STATUS_FA.get(t.status, t.status)}",
+                callback_data=f"supadm:view:{ref}",
+            )
+        kb.button(text=texts.BTN_BACK, callback_data="menu:main")
+        kb.adjust(1)
+        await call.message.answer(
+            "\n".join(chunks), reply_markup=kb.as_markup()
+        )
+
+
+@router.callback_query(F.data.startswith("supadm:view:"))
+async def cb_admin_view_ticket(call: CallbackQuery, state: FSMContext):
+    role = await _get_admin_role(call.from_user.id)
+    perms = rbac.permissions_for(role) if role else set()
+    if rbac.PERM_SUPPORT_MANAGE not in perms:
+        await call.answer(texts.MSG_ADMIN_FORBIDDEN, show_alert=True)
+        return
+
+    ref = call.data.split(":")[2]
+    async with SessionLocal() as db:
+        ticket, customer, messages = await _load_ticket_thread(db, ref)
+
+    if ticket is None:
+        await call.answer(texts.MSG_SUPPORT_ADMIN_TICKET_NOT_FOUND, show_alert=True)
+        return
+
+    await state.clear()
+    await call.message.answer(
+        texts.MSG_SUPPORT_ADMIN_TICKET_ANSWER.format(
+            ref=ref,
+            status_fa=texts.SUPPORT_STATUS_FA.get(ticket.status, ticket.status),
+            transcript=_render_transcript(messages),
+        ),
+        reply_markup=keyboards.admin_ticket_actions(ref),
+    )
+    await call.answer()
+
+
+def _render_transcript(messages: list) -> str:
+    lines = []
+    for m in messages:
+        lines.append(
+            texts.MSG_SUPPORT_ADMIN_TRANSCRIPT_ITEM.format(
+                author="پشتیبانی" if m.author_type == "admin" else "مشتری",
+                when=m.created_at.strftime("%Y-%m-%d %H:%M"),
+                body=m.body,
+            )
+        )
+    return "".join(lines) or "—"
+
+
+async def _load_ticket_thread(db, ref: str | None):
+    """(ticket, customer, messages) for a short ref, or (None, None, []).
+
+    The ref is the first 8 characters of the uuid — Telegram caps callback
+    data at 64 bytes, so the full id does not fit. Resolution and the
+    ambiguity rule live in domain.support.ticket_by_ref.
+    """
+    if not ref:
+        return None, None, []
+
+    ticket = await support_domain.ticket_by_ref(db, ref)
+    if ticket is None:
+        return None, None, []
+
+    customer = (
+        await db.execute(select(Customer).where(Customer.id == ticket.customer_id))
+    ).scalar_one_or_none()
+    messages = (
+        await db.execute(
+            select(SupportMessage)
+            .where(SupportMessage.ticket_id == ticket.id)
+            .order_by(SupportMessage.created_at.asc())
+        )
+    ).scalars().all()
+    return ticket, customer, messages
+
+
+@router.callback_query(F.data.startswith("supadm:reply:"))
+async def cb_admin_reply_ticket(call: CallbackQuery, state: FSMContext):
+    role = await _get_admin_role(call.from_user.id)
+    perms = rbac.permissions_for(role) if role else set()
+    if rbac.PERM_SUPPORT_MANAGE not in perms:
+        await call.answer(texts.MSG_ADMIN_FORBIDDEN, show_alert=True)
+        return
+
+    ref = call.data.split(":")[2]
+    await state.set_state(states.SupportAdmin.waiting_reply)
+    await state.update_data(ticket_ref=ref)
+    await call.message.answer(
+        texts.MSG_SUPPORT_ADMIN_REPLY_PROMPT.format(ref=ref)
+    )
+    await call.answer()
+
+
+@router.message(states.SupportAdmin.waiting_reply)
+async def on_admin_reply(message: Message, state: FSMContext):
+    role = await _get_admin_role(message.from_user.id)
+    perms = rbac.permissions_for(role) if role else set()
+    if rbac.PERM_SUPPORT_MANAGE not in perms:
+        # An admin whose role changed mid-reply, or a customer who somehow
+        # landed in this state, must not be able to answer a ticket.
+        await state.clear()
+        return
+
+    body = (message.text or "").strip()
+    if not body:
+        await message.answer(texts.MSG_SUPPORT_ADMIN_REPLY_PROMPT.format(
+            ref=(await state.get_data()).get("ticket_ref", "—")
+        ))
+        return
+
+    data = await state.get_data()
+    ref = data.get("ticket_ref")
+    # One reply per prompt: the ref must not survive into the admin's next
+    # message, or an unrelated chat would be posted to this customer's ticket.
+    await state.clear()
+
+    async with SessionLocal() as db:
+        ticket, customer, _ = await _load_ticket_thread(db, ref)
+        if ticket is None:
+            await message.answer(texts.MSG_SUPPORT_ADMIN_TICKET_NOT_FOUND)
+            return
+        await support_domain.add_message(
+            db, ticket, "admin", message.from_user.id, body
+        )
+        customer_tg_id = customer.telegram_user_id if customer else None
+        # The row is written with server_default now(), which Python does not
+        # populate — without this the customer is told the reply arrived at
+        # whatever `now` happened to be on their screen (year 1).
+        replied_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+    await message.answer(texts.MSG_SUPPORT_ADMIN_REPLIED.format(ref=ref))
+
+    if customer_tg_id is not None:
+        from bot.webhook import send_message
+
+        try:
+            await send_message(
+                customer_tg_id,
+                texts.MSG_SUPPORT_ADMIN_TICKET_ANSWER.format(
+                    ref=ref,
+                    status_fa=texts.SUPPORT_STATUS_FA.get(
+                        support_domain.STATUS_ANSWERED, support_domain.STATUS_ANSWERED
+                    ),
+                    transcript=texts.MSG_SUPPORT_ADMIN_TRANSCRIPT_ITEM.format(
+                        author="پشتیبانی",
+                        when=replied_at,
+                        body=body,
+                    ),
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to deliver admin reply for ticket %s", ref)
+
+
+@router.callback_query(F.data.startswith("supadm:close:"))
+async def cb_admin_close_ticket(call: CallbackQuery, state: FSMContext):
+    role = await _get_admin_role(call.from_user.id)
+    perms = rbac.permissions_for(role) if role else set()
+    if rbac.PERM_SUPPORT_MANAGE not in perms:
+        await call.answer(texts.MSG_ADMIN_FORBIDDEN, show_alert=True)
+        return
+
+    ref = call.data.split(":")[2]
+    async with SessionLocal() as db:
+        ticket, _customer, _messages = await _load_ticket_thread(db, ref)
+        if ticket is None:
+            await call.answer(texts.MSG_SUPPORT_ADMIN_TICKET_NOT_FOUND, show_alert=True)
+            return
+        await support_domain.close_ticket(db, ticket)
+
+    await call.message.answer(texts.MSG_SUPPORT_ADMIN_CLOSED.format(ref=ref))
+    await call.answer()
 
 
 async def _notify_admins_new_order(db, order: Order, attempt: PaymentAttempt, customer_message: Message):

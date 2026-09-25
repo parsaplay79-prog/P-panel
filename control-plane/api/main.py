@@ -24,6 +24,7 @@ from api.routes import subscription as subscription_routes
 from api.routes import telegram as telegram_routes
 from domain import plans as plans_domain
 from domain import gaming as gaming_domain
+from domain import provisioning as provisioning_domain
 from domain.config import settings
 from domain import __version_platform__
 
@@ -48,6 +49,9 @@ async def lifespan(app: FastAPI):
         ("bootstrap owner", ensure_bootstrap_owner),
         ("gaming profile", gaming_domain.seed_default_gaming_profile),  # before plans (gaming plan links to it)
         ("default plans", plans_domain.seed_default_plans),
+        # Last: a node can only be linked once the pools it belongs to exist,
+        # and a pool can only be matched by tag once the node's tags are set.
+        ("pool link repair", provisioning_domain.repair_pool_links_at_startup),
     ]:
         try:
             await coro_factory()

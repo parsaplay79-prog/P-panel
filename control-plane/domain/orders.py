@@ -93,14 +93,35 @@ async def attach_payment_proof(
 ) -> PaymentAttempt:
     """Customer submitted their screenshot: order → PAID (paid-pending-review),
     attempt WAITING_REVIEW. Multiple proofs per attempt are allowed (customer
-    re-sends a clearer one); review state stays WAITING_REVIEW."""
-    attempt = PaymentAttempt(
-        order_id=order.id,
-        method="manual_proof",
-        amount=0,  # exact amount recorded at approve time from the plan
-        currency="IRR",
-        status="WAITING_REVIEW",
-    )
+    re-sends a clearer one); review state stays WAITING_REVIEW.
+
+    A re-send attaches to the EXISTING open attempt rather than creating a
+    second one. Two attempts on one order meant the review queue showed the
+    same payment twice, and whichever one an admin approved left the other
+    stranded in WAITING_REVIEW forever — the queue could never drain and the
+    duplicate looked like a second, unpaid purchase.
+    """
+    open_attempt = (
+        await db.execute(
+            select(PaymentAttempt)
+            .where(
+                PaymentAttempt.order_id == order.id,
+                PaymentAttempt.status == "WAITING_REVIEW",
+            )
+            .with_for_update()
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    attempt = open_attempt
+    if attempt is None:
+        attempt = PaymentAttempt(
+            order_id=order.id,
+            method="manual_proof",
+            amount=0,  # exact amount recorded at approve time from the plan
+            currency="IRR",
+            status="WAITING_REVIEW",
+        )
     db.add(attempt)
     await db.flush()
 

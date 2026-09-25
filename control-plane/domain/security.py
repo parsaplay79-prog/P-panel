@@ -11,15 +11,106 @@ Node ingest auth (Document 5):
 
 Result: a compromised Node can forge usage/health reports only for itself —
 never for another Node, never against the Control Plane's own API tokens.
+
+The uniqueness half of that is enforced by consume_nonce(), called from
+verify_node_auth() once the signature has checked out. Redis is the store: it
+is the only shared state we already run, and the nonce only has to outlive the
+signature window, so nothing durable is needed.
 """
 
 import hashlib
 import hmac
+import logging
 import time
+from typing import Protocol
+
+import redis.asyncio as redis
 
 from domain.config import settings
 
+logger = logging.getLogger("verdent.security")
+
 SIGNATURE_TTL_SECONDS = 120
+
+# Nonce keys carry a TTL slightly longer than the signature window: a nonce can
+# only ever be presented alongside a timestamp still inside that window, so
+# once the window has closed nothing can replay it and the key can go.
+NONCE_TTL_SECONDS = SIGNATURE_TTL_SECONDS + 30
+NONCE_PREFIX = "verdent:nonce:"
+
+_client: redis.Redis | None = None
+
+
+class NonceStoreUnavailable(RuntimeError):
+    """Redis is unreachable or unconfigured, so no nonce can be recorded."""
+
+
+class SupportsSetNX(Protocol):
+    """The slice of the Redis client nonce storage depends on."""
+
+    async def set(self, name: str, value: str, *, nx: bool, ex: int) -> object: ...
+
+
+def get_redis() -> redis.Redis:
+    """Shared client; from_url does no I/O, so this never blocks startup.
+
+    One client (one connection pool) for the process — the alternative,
+    building a pool per signed request, would grow without bound.
+    """
+    global _client
+    if _client is None:
+        _client = redis.from_url(
+            settings.redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+    return _client
+
+
+async def consume_nonce(
+    store: SupportsSetNX,
+    node_id: str,
+    nonce: str,
+    ttl_seconds: int = NONCE_TTL_SECONDS,
+) -> bool:
+    """Record `nonce` for `node_id`; True if it is fresh (or must be tolerated).
+
+    The key is node-scoped, so one node's traffic can never burn another's
+    nonces, and the value is fixed — only existence is meaningful. A refused
+    SET NX means this exact signed request is already recorded: a replay.
+
+    Redis unreachable: raise NonceStoreUnavailable unless the operator set
+    NODE_REPLAY_FAIL_OPEN, in which case log and accept — see the config
+    docstring for why rejecting is the default.
+    """
+    try:
+        stored = await store.set(
+            f"{NONCE_PREFIX}{node_id}:{nonce}",
+            "1",
+            nx=True,
+            ex=ttl_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 — any Redis failure is unavailability
+        if settings.node_replay_fail_open:
+            logger.error(
+                "nonce store unavailable (redis=%s): %s. Failing OPEN per "
+                "NODE_REPLAY_FAIL_OPEN=true — replay protection is OFF until Redis "
+                "returns.",
+                settings.redis_url,
+                exc,
+            )
+            return True
+        logger.error(
+            "nonce store unavailable (redis=%s): %s. Failing CLOSED: rejecting "
+            "signed ingest. Set NODE_REPLAY_FAIL_OPEN=true to accept instead.",
+            settings.redis_url,
+            exc,
+        )
+        raise NonceStoreUnavailable("nonce store unavailable") from exc
+
+    return stored is not None
 
 
 def sha256_hex(data: str) -> str:

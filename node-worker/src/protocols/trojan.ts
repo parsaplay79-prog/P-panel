@@ -61,8 +61,25 @@ export async function TrOverWSHandler(request: Request, env: Env, ctx: Execution
                 throw new Error(parsed.message);
             }
 
-            // Verdent fork: resolution + admission succeeded — open this
-            // connection's ledger slice.
+            // Verdent fork: concurrent-session admission (Document 1 #5).
+            // It happens HERE, after every parse-time rejection above, so the
+            // increment and the `admitted` flag that owns the matching
+            // decrement are set in one place and cannot drift. Over the limit,
+            // refuse cleanly — a client-recognizable close, not a silent hang.
+            const admittedNow = await incrSession(
+                env,
+                parsed.configId,
+                parsed.deviceLimit ?? 1,
+                ctx
+            );
+
+            if (!admittedNow) {
+                log('device limit reached');
+                throw new Error('device limit reached');
+            }
+
+            // Resolution + admission succeeded — open this connection's ledger
+            // slice. `admitted` is what finalize() gates the decrement on.
             admitted = true;
             userConfigId = parsed.configId;
             tracker = new UsageTracker(parsed.configId, env, ctx);
@@ -109,6 +126,7 @@ interface TrParsed {
     portRemote?: number;
     rawClientData?: ArrayBuffer;
     configId?: string;
+    deviceLimit?: number;
 }
 
 async function parseTrHeader(
@@ -139,13 +157,11 @@ async function parseTrHeader(
         return { hasError: true, message: 'invalid password' };
     }
 
-    const deviceLimit = user.deviceLimit ?? 1;
-    const admitted = await incrSession(env, user.configId, deviceLimit, ctx);
-
-    if (!admitted) {
-        log('device limit reached');
-        return { hasError: true, message: 'device limit reached' };
-    }
+    // Verdent fork: admission is NOT done here. parseTrHeader returns the
+    // resolved identity and every parse-time rejection happens before the
+    // caller increments — see the write handler. Incrementing here and then
+    // returning an error (a short SOCKS5 request, an unsupported command, a
+    // malformed address) left the slot charged with nobody owning the refund.
 
     const socks5DataBuffer = buffer.slice(crLfIndex + 2);
     if (socks5DataBuffer.byteLength < 6) {
@@ -205,5 +221,6 @@ async function parseTrHeader(
         portRemote,
         rawClientData: socks5DataBuffer.slice(portIndex + 4),
         configId: user.configId,
+        deviceLimit: user.deviceLimit ?? 1,
     };
 }

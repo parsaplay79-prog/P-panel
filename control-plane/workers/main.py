@@ -12,16 +12,18 @@ Railway cron):
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from domain.health import HEALTH_CHECK_INTERVAL, health_check_pass
 from domain.notifications import expiry_and_quota_sweep
-from domain.reconcile import reconcile_usage
+from domain.reconcile import RECONCILE_LOOKBACK_DAYS, reconcile_usage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("verdent.worker")
 
 RECONCILE_INTERVAL = 300          # 5 min
 QUOTA_PUSH_INTERVAL = 300         # 5 min
+FULL_RECONCILE_INTERVAL = 86400   # once a day: unbounded pass
 
 
 async def job_queue_loop() -> None:
@@ -33,10 +35,27 @@ async def job_queue_loop() -> None:
 
 
 async def usage_reconcile_loop() -> None:
-    logger.info("reconciliation loop started (every %ss)", RECONCILE_INTERVAL)
+    """Recent window every tick; the whole ledger once a day.
+
+    The unbounded pass is what actually guarantees "aggregates are always
+    repairable from the ledger", but running it every five minutes re-derives
+    every day since launch to find nothing. The bounded pass keeps today's
+    numbers honest, which is what quota checks read; the daily full pass
+    still reaches a row that was corrupted by hand months ago.
+    """
+    logger.info(
+        "reconciliation loop started (every %ss, last %s days; full pass every %ss)",
+        RECONCILE_INTERVAL, RECONCILE_LOOKBACK_DAYS, FULL_RECONCILE_INTERVAL,
+    )
+    last_full: datetime | None = None
     while True:
         try:
-            await reconcile_usage()
+            now = datetime.now(timezone.utc)
+            if last_full is None or (now - last_full) >= timedelta(seconds=FULL_RECONCILE_INTERVAL):
+                await reconcile_usage()          # full pass, `since=None`
+                last_full = now
+            else:
+                await reconcile_usage(since=(now - timedelta(days=RECONCILE_LOOKBACK_DAYS)).date())
         except Exception:  # noqa: BLE001
             logger.exception("reconciliation failed")
         await asyncio.sleep(RECONCILE_INTERVAL)
