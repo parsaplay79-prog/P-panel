@@ -134,6 +134,15 @@ class Node(Base):
     control_plane_health: Mapped[bool] = mapped_column(nullable=False, server_default="false")
     data_plane_health: Mapped[bool] = mapped_column(nullable=False, server_default="false")
     health_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, server_default="0")
+    # Hysteresis counters must survive between health passes: the loop opens a
+    # fresh session each pass, so an in-memory attribute always reads back as 0
+    # and the DEGRADED/OFFLINE thresholds can never be reached.
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    consecutive_successes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # When the node first entered OFFLINE. Failover is gated on this staying
+    # past FAILOVER_AFTER_OFFLINE, so it must be a persisted timestamp — not
+    # derived from the most recent health sample, which is always seconds old.
+    offline_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     current_assignment_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     max_assignment_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
     node_secret_hash: Mapped[str] = mapped_column(Text, nullable=False)

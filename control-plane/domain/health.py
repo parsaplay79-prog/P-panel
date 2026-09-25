@@ -39,6 +39,10 @@ SCORE_ONLINE = 100
 SCORE_DEGRADED = 50
 SCORE_OFFLINE = 0
 
+# States an operator sets deliberately. The health loop may observe them but
+# must never transition a node out of them — see apply_health_transition.
+OPERATOR_HELD_STATES = {"MAINTENANCE", "QUARANTINED", "DECOMMISSIONED"}
+
 
 async def check_node_once(node: Node) -> tuple[bool, float | None]:
     """(success, latency_ms) — one probe against the node's health route."""
@@ -61,47 +65,62 @@ async def check_node_once(node: Node) -> tuple[bool, float | None]:
 
 
 def apply_health_transition(node: Node, success: bool, latency_ms: float | None) -> str:
-    """Update health fields per the hysteresis rules; return new state."""
+    """Update health fields per the hysteresis rules; return new state.
+
+    The counters are real columns, not Python attributes. The health loop
+    opens a fresh session per pass, so anything held in memory reads back as
+    0 next time and the DEGRADED/OFFLINE thresholds are never reached.
+    """
+    # `or SCORE_ONLINE` on a 0 score silently substituted 100, so a node that
+    # decayed to 0 jumped back to 75 on the next probe and never stayed down.
+    # An explicit None check keeps 0 meaning 0.
+    current_score = SCORE_OFFLINE if node.health_score is None else int(node.health_score)
+
+    # An operator holding a node in MAINTENANCE or QUARANTINED owns that state.
+    # The health loop still probes it and records the sample, but must not
+    # overwrite the state — otherwise draining a node for maintenance would
+    # silently return it to rotation the moment it fails a probe.
+    if node.state in OPERATOR_HELD_STATES:
+        return node.state
+
     if success:
         node.control_plane_health = True
         node.data_plane_health = True
-        node.health_score = min(
-            SCORE_ONLINE, (node.health_score or SCORE_OFFLINE) + 50
-        )
-        node.state = "ONLINE" if (node.health_score or 0) >= SCORE_ONLINE else "DEGRADED"
-        node._consecutive_failures = 0  # type: ignore[attr-defined]
+        node.health_score = min(SCORE_ONLINE, current_score + 50)
+        node.consecutive_successes = (node.consecutive_successes or 0) + 1
+        node.consecutive_failures = 0
+        # Clear the OFFLINE clock the moment the node answers again, so a
+        # node that flaps doesn't inherit a stale failover countdown.
+        node.offline_since = None
+
+        if node.consecutive_successes >= ONLINE_AFTER_SUCCESSES:
+            node.state = "ONLINE"
+        elif node.state == "OFFLINE":
+            # First success after being down: recovering, but not yet trusted.
+            node.state = "DEGRADED"
         return node.state
 
     node.control_plane_health = False
     node.data_plane_health = False
-    node.health_score = max(SCORE_OFFLINE, (node.health_score or SCORE_ONLINE) - 25)
-    fails = getattr(node, "_consecutive_failures", 0) + 1
-    node._consecutive_failures = fails  # type: ignore[attr-defined]
+    node.health_score = max(SCORE_OFFLINE, current_score - 25)
+    node.consecutive_successes = 0
+    node.consecutive_failures = (node.consecutive_failures or 0) + 1
 
+    fails = node.consecutive_failures
     if fails >= OFFLINE_AFTER_FAILURES:
+        if node.state != "OFFLINE":
+            # Stamp the transition once. Failover waits on this, so overwriting
+            # it every pass would reset the countdown forever and never fire.
+            node.offline_since = datetime.now(timezone.utc)
         node.state = "OFFLINE"
     elif fails >= DEGRADED_AFTER_FAILURES or node.state == "OFFLINE":
         node.state = "DEGRADED"
     return node.state
 
 
-def _load_runtime_counters(nodes: list[Node], counters: dict[str, int]) -> None:
-    for n in nodes:
-        n._consecutive_failures = counters.get(n.id, 0)  # type: ignore[attr-defined]
-
-
-def _save_runtime_counters(nodes: list[Node]) -> dict[str, int]:
-    return {
-        n.id: getattr(n, "_consecutive_failures", 0)  # type: ignore[attr-defined]
-        for n in nodes
-    }
-
-
 async def failover_offline_nodes(db: AsyncSession) -> int:
     """Re-mint primary assignments of configs on long-offline nodes."""
     cutoff = datetime.now(timezone.utc) - FAILOVER_AFTER_OFFLINE
-    # Nodes whose state went OFFLINE and has stayed there: we approximate
-    # "stayed" with the last failed sample timestamp.
     moved = 0
 
     offline_nodes = (
@@ -109,19 +128,11 @@ async def failover_offline_nodes(db: AsyncSession) -> int:
     ).scalars().all()
 
     for node in offline_nodes:
-        last_sample = (
-            await db.execute(
-                select(NodeHealthSample)
-                .where(
-                    NodeHealthSample.node_id == node.id,
-                    NodeHealthSample.success.is_(False),
-                )
-                .order_by(NodeHealthSample.checked_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-        if last_sample is None or last_sample.checked_at > cutoff:
+        # Gate on when the node *entered* OFFLINE, not on its most recent
+        # failed sample — that is rewritten every 60s, so it is never older
+        # than the 10-minute cutoff and the gate could never open.
+        offline_since = node.offline_since
+        if offline_since is None or offline_since > cutoff:
             continue
 
         assignments = (
@@ -230,13 +241,11 @@ async def health_check_pass() -> dict:
             await db.execute(select(Node).where(Node.state.notin_(["DECOMMISSIONED"])))
         ).scalars().all()
 
-        counters: dict[str, int] = {}
         results = []
 
         for node in nodes:
             success, latency = await check_node_once(node)
             state = apply_health_transition(node, success, latency)
-            counters[node.id] = getattr(node, "_consecutive_failures", 0)  # type: ignore[attr-defined]
 
             db.add(
                 NodeHealthSample(

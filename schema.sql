@@ -53,6 +53,9 @@ CREATE TABLE nodes (
     control_plane_health   BOOLEAN NOT NULL DEFAULT false,
     data_plane_health      BOOLEAN NOT NULL DEFAULT false,
     health_score           NUMERIC(5,2) NOT NULL DEFAULT 0,   -- 0-100, Document 2 scoring model
+    consecutive_failures   INTEGER NOT NULL DEFAULT 0,        -- health-loop hysteresis; MUST be a column,
+    consecutive_successes  INTEGER NOT NULL DEFAULT 0,        -- not memory: the loop reopens a session
+    offline_since          TIMESTAMPTZ,                       -- when OFFLINE began (failover gate)
     current_assignment_count INTEGER NOT NULL DEFAULT 0,
     max_assignment_count   INTEGER NOT NULL DEFAULT 3,        -- BPB's own "2-3 users, free tier" finding
     node_secret_hash       TEXT NOT NULL,                     -- for HMAC-auth'ing this node's own calls

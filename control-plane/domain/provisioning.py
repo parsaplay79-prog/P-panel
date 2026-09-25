@@ -20,7 +20,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import CloudflareAccount, Node
+from db.models import CloudflareAccount, Node, Pool, PoolNode
 from domain.cloudflare import CloudflareClient
 from domain.config import settings
 from domain.kv_sync import seed_node_kv
@@ -54,6 +54,64 @@ def derive_secure_path(node_id: str) -> str:
 
     raw = hashlib.sha256(f"{node_id}:{settings.node_hmac_secret_pepper}".encode()).hexdigest()
     return raw[:24]
+
+
+async def attach_node_to_pools(
+    db: AsyncSession, node: Node, *, only_named: str | None = None
+) -> list[str]:
+    """Link a freshly provisioned node into every Pool whose capability_tags
+    it satisfies (Document 1, PROV-08).
+
+    Without this the node exists and is healthy but sits in no pool, so
+    `select_node_for_pool` returns None for every plan and fulfillment fails
+    with "no eligible node" — the node is provisioned but unreachable by
+    customers. Idempotent: a node already linked to a pool is skipped, so
+    re-running provisioning (or a retry) cannot double-link.
+    """
+    node_tags = set(node.capability_tags or [])
+
+    query = select(Pool)
+    if only_named:
+        query = query.where(Pool.name == only_named)
+    pools = (await db.execute(query)).scalars().all()
+
+    linked: list[str] = []
+    for pool in pools:
+        # A pool with no declared tags is treated as general-purpose, so a
+        # default pool still accepts a normal node. Otherwise the pool's tags
+        # must be a subset of what the node actually offers.
+        pool_tags = set(pool.capability_tags or [])
+        if pool_tags and not pool_tags.issubset(node_tags):
+            logger.info(
+                "node %s not linked to pool %r: pool wants %s, node offers %s",
+                node.id, pool.name, sorted(pool_tags), sorted(node_tags),
+            )
+            continue
+
+        exists = (
+            await db.execute(
+                select(PoolNode).where(
+                    PoolNode.pool_id == pool.id, PoolNode.node_id == node.id
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            linked.append(pool.name)
+            continue
+
+        db.add(PoolNode(pool_id=pool.id, node_id=node.id))
+        linked.append(pool.name)
+
+    await db.commit()
+    if linked:
+        logger.info("node %s linked to pool(s): %s", node.id, ", ".join(linked))
+    else:
+        logger.warning(
+            "node %s is in NO pool — it will be invisible to fulfillment. "
+            "Check that a pool exists whose capability_tags the node satisfies.",
+            node.id,
+        )
+    return linked
 
 
 async def provision_node(
@@ -156,6 +214,12 @@ async def provision_node(
     )
     db.add(node)
     await db.commit()
+
+    # 6. Join the node to the pools it can serve. MUST happen before the
+    #    function returns: a node outside every pool is healthy but
+    #    unselectable, and the failure only shows up much later as a
+    #    customer order that cannot be fulfilled.
+    await attach_node_to_pools(db, node)
 
     logger.info("provisioned node %s at %s", node_id, public_url)
     return node
