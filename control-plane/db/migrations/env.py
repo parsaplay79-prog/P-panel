@@ -17,7 +17,18 @@ from db.models import Base
 
 config = context.config
 
-if config.config_file_name is not None:
+# Logging is configured here only when Alembic is driven from its own CLI.
+# When the app calls run_migrations() at startup (db/migrate.py) it sets
+# attributes["configure_logger"] = False, because fileConfig() reconfigures
+# logging GLOBALLY: it replaces root's handlers and applies alembic.ini's
+# [logger_root] level = WARN. Run after logging.basicConfig() — which is exactly
+# what startup does — that silently suppresses every INFO line for the rest of
+# the process. Both effects were reproduced: root level 20 -> 30, and with the
+# default disable_existing_loggers=True the app logger also went
+# disabled False -> True. Either one alone is enough to lose all boot logging.
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", settings.async_database_url)

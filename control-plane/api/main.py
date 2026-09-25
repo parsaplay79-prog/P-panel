@@ -3,10 +3,11 @@
 Railway service: `web`  (start: uvicorn api.main:app --host 0.0.0.0 --port $PORT)
 
 On startup:
-  1. bootstrap OWNER admin (TELEGRAM_OWNER_ID, read exactly once)
-  2. seed default plans (only when the plans table is empty)
-  3. seed the default gaming profile (Tier A/B honest settings)
-  4. register the Telegram webhook (only when token + base URL are set)
+  1. run pending Alembic migrations (advisory-locked; see db/migrate.py)
+  2. bootstrap OWNER admin (TELEGRAM_OWNER_ID, read exactly once)
+  3. seed default plans (only when the plans table is empty)
+  4. seed the default gaming profile (Tier A/B honest settings)
+  5. register the Telegram webhook (only when token + base URL are set)
 
 The app boots even when Telegram/Cloudflare are unconfigured — the control
 plane never depends on the bot to run.
@@ -18,6 +19,7 @@ import logging
 from fastapi import FastAPI
 
 from admin_panel.bootstrap_admin import ensure_bootstrap_owner
+from db.migrate import run_migrations
 from api.routes import health as health_routes
 from api.routes import nodes as node_routes
 from api.routes import subscription as subscription_routes
@@ -42,6 +44,13 @@ logger = logging.getLogger("verdent.platform")
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("verdent-platform %s starting (env=%s)", __version_platform__, settings.environment)
+
+    # Migrations run first and are deliberately NOT in the tolerant block below.
+    # Every startup step after this one reads or writes the schema, and a
+    # half-migrated database would fail them in ways that look like bugs in
+    # those steps rather than like a missing migration. A crash-loop that names
+    # the migration is the honest failure.
+    await run_migrations()
 
     startup_errors: list[str] = []
 

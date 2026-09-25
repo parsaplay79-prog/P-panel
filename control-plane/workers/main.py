@@ -14,6 +14,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+from db.migrate import run_migrations
 from domain.health import HEALTH_CHECK_INTERVAL, health_check_pass
 from domain.notifications import expiry_and_quota_sweep
 from domain.reconcile import RECONCILE_LOOKBACK_DAYS, reconcile_usage
@@ -83,6 +84,11 @@ async def quota_push_loop() -> None:
 
 async def main() -> None:
     logger.info("verdent worker starting")
+    # The web service also migrates on boot, and all three start at once on
+    # deploy. run_migrations takes the same advisory lock, so whichever service
+    # wins migrates and the others block until it finishes. Not fatal if the web
+    # service already did it — command.upgrade is a no-op at head.
+    await run_migrations()
     await asyncio.gather(
         job_queue_loop(),
         usage_reconcile_loop(),

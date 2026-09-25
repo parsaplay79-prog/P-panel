@@ -11,6 +11,7 @@ here on a simple internal schedule:
 import asyncio
 import logging
 
+from db.migrate import run_migrations
 from domain.notifications import expiry_and_quota_sweep
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -21,6 +22,10 @@ SWEEP_INTERVAL = 300  # 5 min
 
 async def main() -> None:
     logger.info("verdent cron starting (sweep every %ss)", SWEEP_INTERVAL)
+    # Shares the web/worker advisory lock. The sweep reads and writes the same
+    # schema the other two services migrate, so it must not start on a
+    # half-migrated database.
+    await run_migrations()
     while True:
         try:
             await expiry_and_quota_sweep()
