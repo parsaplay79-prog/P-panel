@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block sub %}
+  <p class="sub">تیکت‌هایی که منتظر پاسخ هستند. تیکت بسته از این فهرست خارج می‌شود.</p>
+{% endblock %}
+
+{% block content %}
+{% set ok = request.query_params.get('ok') %}
+{% set err = request.query_params.get('err') %}
+{% if ok == 'closed' %}
+  <div class="alert alert-ok">تیکت بسته شد.</div>
+{% elif err == 'notfound' %}
+  <div class="alert alert-warn">تیکتی با این شماره پیدا نشد.</div>
+{% endif %}
+
+{% if not tickets %}
+  <div class="box"><div class="empty">تیکت بازی وجود ندارد.</div></div>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>تیکت</th>
+        <th>وضعیت</th>
+        <th>مشتری</th>
+        <th>آخرین به‌روزرسانی</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tickets %}
+      {% set cust = customers.get(t.customer_id) %}
+      <tr>
+        <td><code>{{ ticket_ref(t.id) }}</code></td>
+        <td>
+          <span class="tag {% if t.status == 'open' %}tag-warn{% else %}tag-ok{% endif %}">
+            {{ SUPPORT_STATUS_FA.get(t.status, t.status) }}
+          </span>
+        </td>
+        <td>
+          {% if cust %}
+            {{ cust.display_name or '—' }}<br>
+            <span class="mono">{{ cust.telegram_user_id }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ t.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td><a class="btn btn-sm" href="/admin/tickets/{{ ticket_ref(t.id) }}">مشاهده</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

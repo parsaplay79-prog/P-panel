@@ -27,7 +27,12 @@ CREATE TABLE admins (
     role                TEXT NOT NULL
                          CHECK (role IN ('OWNER', 'ADMIN', 'SUPPORT', 'FINANCE', 'INFRASTRUCTURE')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by          UUID REFERENCES admins(id)       -- NULL only for the bootstrap OWNER
+    created_by          UUID REFERENCES admins(id),      -- NULL only for the bootstrap OWNER
+    -- Web panel login (migration 005). NULL for a Telegram-only admin; the
+    -- UNIQUE index tolerates any number of NULLs, so both kinds coexist.
+    web_username        TEXT UNIQUE,
+    web_password_hash   TEXT,
+    token_version       INTEGER NOT NULL DEFAULT 1       -- bumped to revoke sessions
 );
 
 -- ============================================================================

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block sub %}
+  <p class="sub">دلیل رد برای مشتری ارسال می‌شود — واضح و قابل پیگیری بنویسید.</p>
+{% endblock %}
+
+{% block content %}
+<div class="box">
+  <h3>سفارش <code>{{ ref }}</code></h3>
+  <div>مبلغ: {{ format_price(attempt.amount or 0, attempt.currency) }}</div>
+  <div>نام درخواستی: <b>{{ order.requested_display_name }}</b></div>
+</div>
+
+<form method="post" action="/admin/orders/{{ order.id }}/reject">
+  <label for="reason">دلیل رد</label>
+  <textarea id="reason" name="reason" required
+            placeholder="مثلاً: مبلغ واریزی با مبلغ سفارش مطابقت ندارد."></textarea>
+  <div class="actions">
+    <button class="btn-bad" type="submit">❌ ثبت رد و اطلاع به مشتری</button>
+    <a class="btn btn-ghost" href="/admin/orders">انصراف</a>
+  </div>
+</form>
+{% endblock %}

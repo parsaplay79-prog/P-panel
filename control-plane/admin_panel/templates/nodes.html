@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block sub %}
+  <p class="sub">
+    وضعیت، سلامت و ظرفیت نودها. نودی که ساخته می‌شود در چرخه‌ی بعدی سلامت
+    (حداکثر ۶۰ ثانیه) ONLINE می‌شود.
+  </p>
+{% endblock %}
+
+{% block content %}
+{% if not accounts %}
+  <div class="alert alert-warn">
+    هنوز حساب Cloudflare ثبت نشده است. بدون آن ساخت نود ممکن نیست
+    (SETUP-GUIDE §6 مرحله ۱).
+  </div>
+{% endif %}
+
+<div class="actions" style="margin-bottom:14px">
+  <a class="btn" href="/admin/nodes/new">➕ ساخت نود جدید</a>
+</div>
+
+{% if not nodes %}
+  <div class="box"><div class="empty">هنوز نودی ثبت نشده است.</div></div>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>نود</th>
+        <th>وضعیت</th>
+        <th>سلامت</th>
+        <th>ظرفیت</th>
+        <th>آدرس</th>
+        <th>ایجاد</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for n in nodes %}
+      <tr>
+        <td><code>{{ n.worker_script_name }}</code></td>
+        <td>
+          <span class="tag
+            {%- if n.state == 'ONLINE' %} tag-ok
+            {%- elif n.state in ('DEGRADED', 'PROVISIONING') %} tag-warn
+            {%- elif n.state in ('OFFLINE', 'QUARANTINED') %} tag-bad{% endif %}">
+            {{ n.state }}
+          </span>
+        </td>
+        <td>{{ n.health_score or 0 }}</td>
+        <td>{{ n.current_assignment_count }}/{{ n.max_assignment_count }}</td>
+        <td>
+          {% if n.custom_domain %}<code>{{ n.custom_domain }}</code>{% else %}—{% endif %}
+        </td>
+        <td>{{ n.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

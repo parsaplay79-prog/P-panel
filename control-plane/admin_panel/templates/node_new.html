@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block sub %}
+  <p class="sub">
+    نام اسکریپت نود روی Cloudflare. ساخت نود تا ۲ دقیقه طول می‌کشد و در همین
+    صفحه منتظر می‌ماند — صفحه را نبندید.
+  </p>
+{% endblock %}
+
+{% block content %}
+{% if error %}
+  <div class="alert alert-bad">{{ error }}</div>
+{% endif %}
+
+{% if created %}
+  <div class="alert alert-ok">
+    ✅ نود ساخته شد.<br>
+    آدرس: <code>{{ created.custom_domain }}</code><br>
+    در چرخه‌ی بعدی سلامت (حداکثر ۶۰ ثانیه) ONLINE می‌شود.
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin/nodes">مشاهده نودها</a>
+    <a class="btn btn-ghost" href="/admin/nodes/new">ساخت نود دیگر</a>
+  </div>
+{% else %}
+  <form method="post" action="/admin/nodes/new">
+    <label for="script_name">نام اسکریپت نود</label>
+    <input id="script_name" name="script_name" type="text" dir="ltr"
+           pattern="[a-z0-9][a-z0-9-]{0,30}"
+           value="{{ script_name or '' }}"
+           placeholder="verdent-node-2" required>
+    <p class="sub">
+      فقط حروف کوچک انگلیسی، عدد و خط تیره. این نام باید در کل سیستم یکتا باشد.
+    </p>
+    <div class="actions">
+      <button type="submit">➕ ساخت نود (تا ۲ دقیقه)</button>
+      <a class="btn btn-ghost" href="/admin/nodes">انصراف</a>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

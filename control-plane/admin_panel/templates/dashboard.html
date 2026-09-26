@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block sub %}
+  <p class="sub">نمای کلی سیستم — اعداد از همان کوئری‌هایی می‌آید که ربات نشان می‌دهد.</p>
+{% endblock %}
+
+{% block content %}
+<div class="cards">
+  <div class="card">
+    <div class="num">{{ n_configs }}</div>
+    <div class="lbl">کانفیگ‌های فعال</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ n_pending }}</div>
+    <div class="lbl">پرداخت در انتظار بررسی</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ n_nodes_online }} / {{ n_nodes_total }}</div>
+    <div class="lbl">نودهای آنلاین</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ n_tickets }}</div>
+    <div class="lbl">تیکت‌های باز</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ n_customers }}</div>
+    <div class="lbl">مشتریان</div>
+  </div>
+</div>
+
+<h2>دسترسی سریع</h2>
+<div class="box">
+  <div class="actions">
+    {% if "payment.review" in perms %}
+      <a class="btn" href="/admin/orders">🧾 بررسی پرداخت‌ها</a>
+    {% endif %}
+    {% if "support.manage" in perms %}
+      <a class="btn" href="/admin/tickets">🆘 تیکت‌های پشتیبانی</a>
+    {% endif %}
+    {% if "node.manage" in perms %}
+      <a class="btn" href="/admin/nodes">🖥 نودها</a>
+    {% endif %}
+    {% if "config.test" in perms %}
+      <a class="btn" href="/admin/test">🧪 کانفیگ تستی</a>
+    {% endif %}
+    {% if "admin.manage" in perms %}
+      <a class="btn" href="/admin/admins">👑 ادمین‌ها</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

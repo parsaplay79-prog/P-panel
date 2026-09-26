@@ -90,6 +90,18 @@ class Admin(Base):
     created_at: Mapped[datetime] = _created_at()
     created_by: Mapped[str | None] = mapped_column(ForeignKey("admins.id"))
 
+    # Web panel login (migration 005). Nullable on purpose: an admin created
+    # from inside Telegram has no web credentials, and the bootstrap OWNER row
+    # predates the panel entirely. A UNIQUE constraint on a nullable column is
+    # safe in Postgres — NULLs do not collide — so any number of Telegram-only
+    # admins coexist while two web logins cannot share a username.
+    web_username: Mapped[str | None] = mapped_column(Text, unique=True)
+    web_password_hash: Mapped[str | None] = mapped_column(Text)
+    # Bumped to invalidate every session cookie issued before the bump. A
+    # signed cookie is a bearer token, so clearing it in one browser does not
+    # stop a copied value working elsewhere; this counter is what revokes.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
 
 # ---------------------------------------------------------------------------
 # INFRASTRUCTURE (data plane registry)

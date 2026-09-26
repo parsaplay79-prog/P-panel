@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} — پنل مدیریت {{ app_name }}</title>
+  <link rel="stylesheet" href="/admin/static/admin.css?v=1">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      {{ app_name }}
+      <small>پنل مدیریت</small>
+    </div>
+    <nav class="nav">
+      {% for item in nav %}
+        <a href="{{ item.href }}"
+           class="{% if request.url.path == item.href %}active{% endif %}">
+          {{ item.icon }} {{ item.label }}
+        </a>
+      {% endfor %}
+    </nav>
+    {% if admin %}
+    <div class="who">
+      <div>نقش: <b>{{ admin.role }}</b></div>
+      <div class="mono">{{ admin.web_username }}</div>
+      <form method="post" action="/admin/logout">
+        <button class="btn-ghost btn-sm" type="submit">خروج</button>
+      </form>
+    </div>
+    {% endif %}
+  </aside>
+
+  <main class="main">
+    <h1>{{ title }}</h1>
+    {% block sub %}{% endblock %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>
