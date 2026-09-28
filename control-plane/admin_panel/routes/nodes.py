@@ -46,6 +46,7 @@ from db.models import (
 from domain import jobs as jobs_domain
 from domain import rbac
 from domain.audit import audit
+from domain.health import OPERATOR_HELD_STATES
 from domain.jobs import JOB_DECOMMISSION_NODE, JOB_PROVISION_NODE, enqueue
 from domain.jobs import enqueue_key_for_decommission, enqueue_key_for_provision
 

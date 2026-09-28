@@ -1469,6 +1469,34 @@ def section_templates() -> None:
     from admin_panel import templating
     from domain import rbac
 
+    # Actually RENDER base.html. Every check above inspects source text, and
+    # source text cannot catch a Jinja name that resolves to the wrong object:
+    # `{% for item in group.items %}` reads as "the group's items" but in Jinja
+    # `group.items` is the dict's bound `.items` METHOD, so the loop raised
+    # "TypeError: 'builtin_function_or_method' object is not iterable" and every
+    # one of the panel's 27 pages returned HTTP 500 while all of these text
+    # checks stayed green. A render is the only thing that would have caught it.
+    for role in rbac.ALL_ROLES:
+        perms = rbac.permissions_for(role)
+        try:
+            templating.templates.env.get_template("base.html").render(
+                title="آزمون",
+                app_name="وردنت",
+                nav_groups=templating._nav_groups(perms),
+                active_nav="/admin/",
+                admin={"role": role, "web_username": "tester", "telegram_user_id": 1},
+                flash=None,
+            )
+            rendered, err = True, ""
+        except Exception as exc:  # noqa: BLE001 — any failure here is the point
+            rendered, err = False, f"{type(exc).__name__}: {exc}"
+        check(
+            f"base.html renders for {role}",
+            rendered,
+            f"{err} — every page extends base.html, so a template error here "
+            "turns the whole panel into HTTP 500",
+        )
+
     for role in rbac.ALL_ROLES:
         perms = rbac.permissions_for(role)
         groups = templating._nav_groups(perms)

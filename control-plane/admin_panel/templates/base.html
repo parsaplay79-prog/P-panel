@@ -25,7 +25,7 @@
       {% for group in nav_groups %}
         <div class="nav-group">
           <div class="nav-group-label">{{ group.icon }} {{ group.label }}</div>
-          {% for item in group.items %}
+          {% for item in group['items'] %}
             <a href="{{ item.href }}"
                class="{% if active_nav | default('') == item.href %}active{% endif %}">
               {{ item.icon }} {{ item.label }}

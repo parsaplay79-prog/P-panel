@@ -23,7 +23,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
-from sqlalchemy import Text, func, or_, select
+from sqlalchemy import Text, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin_panel import auth
@@ -45,6 +45,18 @@ from domain.subscriptions import usage_current_period_detail
 logger = logging.getLogger("verdent.admin_panel.usage")
 
 router = APIRouter()
+
+# `date_trunc('day', reported_at)`, with the unit inlined as a SQL literal
+# rather than bound as a parameter.
+#
+# SQLAlchemy binds each `func.date_trunc("day", ...)` call's unit separately, so
+# the SELECT emitted `date_trunc($1::VARCHAR, reported_at)` while the matching
+# GROUP BY emitted `date_trunc($5::VARCHAR, reported_at)`. Postgres compares the
+# GROUP BY expression against the SELECT list textually, sees two different
+# expressions, and rejects the query with "column usage_events.reported_at must
+# appear in the GROUP BY clause" — even though the two are logically identical.
+# Reusing one `literal_column` for both sides makes them render the same string.
+_DAY_EXPR = func.date_trunc(literal_column("'day'"), UsageEvent.reported_at)
 
 SORT_COLUMNS = {
     "created": Configuration.created_at,
@@ -190,12 +202,12 @@ async def usage_detail(
     ledger_rows = (
         await db.execute(
             select(
-                func.date_trunc("day", UsageEvent.reported_at).label("day"),
+                _DAY_EXPR.label("day"),
                 func.coalesce(func.sum(UsageEvent.bytes_up), 0),
                 func.coalesce(func.sum(UsageEvent.bytes_down), 0),
             )
             .where(UsageEvent.configuration_id == config.id)
-            .group_by(func.date_trunc("day", UsageEvent.reported_at))
+            .group_by(_DAY_EXPR)
         )
     ).all()
 
@@ -255,7 +267,7 @@ async def reconcile_page(
         await db.execute(
             select(
                 UsageEvent.configuration_id,
-                func.date_trunc("day", UsageEvent.reported_at).label("day"),
+                _DAY_EXPR.label("day"),
                 func.coalesce(func.sum(UsageEvent.bytes_up), 0),
                 func.coalesce(func.sum(UsageEvent.bytes_down), 0),
             )
@@ -266,7 +278,7 @@ async def reconcile_page(
             .where(UsageEvent.reported_at >= since_dt)
             .group_by(
                 UsageEvent.configuration_id,
-                func.date_trunc("day", UsageEvent.reported_at),
+                _DAY_EXPR,
             )
         )
     ).all()
