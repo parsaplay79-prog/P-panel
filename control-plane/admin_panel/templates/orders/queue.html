@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/orders">در انتظار بررسی</a>
+    <a href="/admin/orders/all">همه‌ی سفارش‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+<p class="lede">
+  این صف فقط کارهایی را نشان می‌دهد که منتظر تصمیم شما هستند: پرداخت‌هایی که
+  مشتری رسیدشان را ارسال کرده و تأیید نشده‌اند. تاریخچه‌ی کامل زیر
+  <a href="/admin/orders/all">همه‌ی سفارش‌ها</a> است.
+</p>
+
+<div class="table-wrap">
+  <div id="rows">{% include "orders/_queue_rows.html" %}</div>
+</div>
+{% endblock %}

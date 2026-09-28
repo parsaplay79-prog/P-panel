@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block content %}
+{% set status_options = [] %}
+{% for state, label in CONFIG_STATUS_FA.items() %}
+  {% set _ = status_options.append((state, label)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/configurations", query,
+              {"status": status_options,
+               "type": [("normal", "عادی"), ("gaming", "گیمینگ"), ("test", "تستی")]},
+              "جست‌وجوی نام کانفیگ، پسوند، شناسه یا نام مشتری…") }}
+
+  <div id="rows">{% include "configurations/_rows.html" %}</div>
+{% endblock %}

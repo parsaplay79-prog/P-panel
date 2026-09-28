@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/nodes">نودها</a>
+    <a class="active" href="/admin/nodes/{{ node.id }}">{{ node.worker_script_name }}</a>
+    <a href="/admin/health/{{ node.id }}">تاریخ سلامت</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <span class="tag {{ NODE_STATE_TAG.get(node.state, '') }} tag-lg">
+    {{ NODE_STATE_FA.get(node.state, node.state) }}
+  </span>
+  <div class="detail-actions">
+    {% if account %}<span class="muted sm">{{ account.label }}</span>{% endif %}
+  </div>
+</div>
+
+{% if node.state in OPERATOR_HELD_STATES %}
+  <div class="alert alert-warn">
+    این نود به‌دست اپراتور از چرخه خارج شده است (<b>{{ NODE_STATE_FA.get(node.state, node.state) }}</b>).
+    تا وقتی در این وضعیت باشد، بررسی سلامت آن را به ONLINE برنمی‌گرداند — برای
+    بازگرداندن، وضعیت را «بازگرداندن به چرخه» کنید.
+  </div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="box">
+    <h2>مشخصات</h2>
+    <div class="fields">
+      {{ m.field("نام اسکریپت", '<span class="mono">' ~ node.worker_script_name ~ '</span>' | safe) }}
+      {{ m.field("دامنه", '<span class="mono">' ~ (node.custom_domain or '—') ~ '</span>' | safe) }}
+      {{ m.field("شناسه", '<span class="mono sm">' ~ node.id ~ '</span>' | safe) }}
+      {{ m.field("ساخت", fmt_dt(node.created_at)) }}
+      {{ m.field("تگ‌ها", node.capability_tags | join('، ') if node.capability_tags else None) }}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>سلامت</h2>
+    <div class="fields">
+      {{ m.field("امتیاز", node.health_score | int) }}
+      {{ m.field("کنترل‌پلین", 'سالم' if node.control_plane_health else 'ناسالم') }}
+      {{ m.field("دیتاپلین", 'سالم' if node.data_plane_health else 'ناسالم') }}
+      {{ m.field("شکست پیاپی", node.consecutive_failures) }}
+      {{ m.field("موفقیت پیاپی", node.consecutive_successes) }}
+      {{ m.field("آفلاین از", fmt_dt(node.offline_since)) }}
+    </div>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/health/{{ node.id }}">تاریخ نمونه‌ها</a>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>وضعیت و ظرفیت</h2>
+  <div class="grid-2">
+    <form method="post" action="/admin/nodes/{{ node.id }}/state">
+      <label for="state">تغییر وضعیت</label>
+      <select id="state" name="state" required>
+        {% for state, description in OPERATOR_STATES.items() %}
+          <option value="{{ state }}" {% if node.state == state %}selected{% endif %}>{{ NODE_STATE_FA.get(state, state) }}</option>
+        {% endfor %}
+      </select>
+      <div class="muted sm">
+        {% for state, description in OPERATOR_STATES.items() %}
+          <div><b>{{ NODE_STATE_FA.get(state, state) }}:</b> {{ description }}</div>
+        {% endfor %}
+      </div>
+      <label for="reason">دلیل</label>
+      <input id="reason" name="reason" type="text" placeholder="در گزارش رویدادها ثبت می‌شود.">
+      <div class="actions">
+        <button class="btn-sm" type="submit"
+                {% if node.state == 'DECOMMISSIONED' %}disabled{% endif %}>اعمال وضعیت</button>
+      </div>
+    </form>
+
+    <form method="post" action="/admin/nodes/{{ node.id }}/capacity">
+      <label for="max_assignment_count">حداکثر مشتری</label>
+      <input id="max_assignment_count" name="max_assignment_count" type="number"
+             min="1" max="1000" value="{{ node.max_assignment_count }}" required>
+      <div class="muted sm">
+        بار فعلی: <b>{{ node.current_assignment_count }}</b>.
+        کاهش این عدد کسی را بیرون نمی‌کند — فقط پذیرش مشتری جدید متوقف می‌شود تا
+        نود به‌طور طبیعی تخلیه شود.
+      </div>
+      <div class="actions"><button class="btn-sm" type="submit">ذخیره‌ی ظرفیت</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="box">
+  <h2>استخرها</h2>
+  {% if pools %}
+    <div class="tags-row">
+      {% for pool in pools %}
+        <a class="tag" href="/admin/pools/{{ pool.id }}">{{ pool.name }}</a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="alert alert-warn">
+      این نود در هیچ استخری نیست، پس هیچ‌وقت برای سرویس‌دادن انتخاب نمی‌شود —
+      حتی اگر کاملاً سالم باشد.
+    </div>
+  {% endif %}
+  <div class="actions">
+    {{ m.post_form("/admin/nodes/" ~ node.id ~ "/repair-pools", "اتصال به استخرهای سازگار", cls="btn-ghost btn-sm") }}
+  </div>
+</div>
+
+<div class="box">
+  <h2>مشتریان روی این نود</h2>
+  {% if assignments %}
+    <table>
+      <thead><tr><th>کانفیگ</th><th>نقش</th><th>کلید</th><th>اتصال از</th></tr></thead>
+      <tbody>
+        {% for item in assignments %}
+          <tr>
+            <td><a href="/admin/configurations/{{ item.config.id }}">{{ item.config.display_name }}_{{ item.config.suffix }}</a></td>
+            <td>{{ 'اصلی' if item.assignment.role == 'primary' else 'پشتیبان' }}</td>
+            <td class="mono sm">{{ item.assignment.proxy_uuid }}</td>
+            <td class="mono sm">{{ fmt_dt(item.assignment.assigned_at) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted sm">{{ assignments | length }} اتصال فعال (حداکثر ۲۰۰ مورد نمایش داده می‌شود).</div>
+  {% else %}
+    {{ m.empty_state("هیچ مشتری‌ای روی این نود نیست.") }}
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>نمونه‌های سلامت</h2>
+    {% if samples %}
+      <table>
+        <thead><tr><th>زمان</th><th>نوع</th><th>نتیجه</th><th>تأخیر</th></tr></thead>
+        <tbody>
+          {% for sample in samples %}
+            <tr>
+              <td class="mono sm">{{ fmt_dt(sample.checked_at) }}</td>
+              <td class="muted sm">{{ sample.check_type }}</td>
+              <td>
+                {% if sample.success %}<span class="tag tag-ok">موفق</span>
+                {% else %}<span class="tag tag-bad">ناموفق</span>{% endif %}
+              </td>
+              <td class="num sm">{{ sample.latency_ms | int if sample.latency_ms is not none else '—' }}ms</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("نمونه‌ای ثبت نشده است.") }}
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>کارهای این نود</h2>
+    {% if jobs %}
+      <table>
+        <thead><tr><th>زمان</th><th>نوع</th><th>وضعیت</th></tr></thead>
+        <tbody>
+          {% for job in jobs %}
+            <tr>
+              <td class="mono sm"><a href="/admin/jobs/{{ job.id }}">{{ fmt_dt(job.created_at) }}</a></td>
+              <td class="muted sm">{{ job.job_type }}</td>
+              <td class="muted sm">{{ job.status }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("کاری برای این نود ثبت نشده است.") }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="box box-bad">
+  <h2>برچیدن نود</h2>
+  <p class="muted">
+    اسکریپت Worker این نود از Cloudflare حذف می‌شود — یعنی کل دیتاپلین آن.
+    اگر مشتری روی نود باشد، failover رخ <b>نمی‌دهد</b>، چون failover با آفلاین‌شدن
+    <i>سلامت</i> راه می‌افتد، نه با تصمیم اپراتور به برچیدن.
+  </p>
+  {% if node.state == 'DECOMMISSIONED' %}
+    <span class="tag tag-bad">قبلاً برچیده شده</span>
+  {% elif node.current_assignment_count %}
+    <div class="alert alert-bad">
+      این نود <b>{{ node.current_assignment_count }}</b> مشتری فعال دارد و برچیده نمی‌شود.
+      دو راه درست: بگذارید حلقه‌ی سلامت خودش آن را آفلاین کند و مشتری‌ها جابه‌جا
+      شوند، یا وضعیت را «تعمیرات» کنید و صبر کنید تا تخلیه شود.
+    </div>
+  {% else %}
+    {{ m.confirm_form("/admin/nodes/" ~ node.id ~ "/decommission", "برچیدن نود",
+                      confirm_text="اسکریپت این نود از Cloudflare حذف شود؟ این کار برگشت‌پذیر نیست.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

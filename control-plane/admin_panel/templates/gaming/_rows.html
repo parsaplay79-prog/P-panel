@@ -1,0 +1,48 @@
+{% import "_macros.html" as m %}
+{% if profiles %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "نام پروفایل") }}
+        {{ m.sort_header(query, base_path, "version", "نسخه", numeric=true) }}
+        <th>وضعیت</th>
+        <th class="num">پلن‌ها</th>
+        <th class="num">کانفیگ‌ها</th>
+        {{ m.sort_header(query, base_path, "created", "انتشار") }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for profile in profiles %}
+        <tr>
+          <td><a href="/admin/gaming/{{ profile.id }}">{{ profile.name }}</a></td>
+          <td class="num">v{{ profile.version }}</td>
+          <td>
+            {% if profile.is_current %}
+              <span class="tag tag-ok">فعال</span>
+            {% else %}
+              <span class="tag">تاریخی</span>
+            {% endif %}
+          </td>
+          {# Plan and config counts are per *version*: publishing v5 changes
+             nothing for a plan still pointing at v4, and that distinction is the
+             difference between "this edit does nothing" and "this edit is live
+             for 40 customers". #}
+          <td class="num">{{ plan_counts.get(profile.id, 0) }}</td>
+          <td class="num">{{ config_counts.get(profile.id, 0) }}</td>
+          <td class="mono sm">{{ fmt_dt(profile.created_at) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("پروفایلی با این شرایط نیست.",
+                  "پلن‌های گیمینگ بدون پروفایل، از تنظیمات پیش‌فرض استفاده می‌کنند.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/gaming", page, query) }}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/tickets">تیکت‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set status_options = [("all", "همه")] %}
+{% for value, label in TICKET_STATUS_FA.items() %}
+  {% set _ = status_options.append((value, label)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/tickets", query,
+              {"status": status_options},
+              "جست‌وجوی شناسه‌ی تیکت، موضوع یا مشتری…") }}
+
+<div class="muted sm">
+  به‌طور پیش‌فرض فقط تیکت‌های باز و پاسخ‌داده‌شده نمایش داده می‌شوند. تیکت بسته‌ای
+  که مشتری دوباره پیام بدهد، خودکار باز می‌شود — پس چیزی از دست نمی‌رود و صف،
+  صف می‌ماند.
+</div>
+
+  <div id="rows">{% include "tickets/_rows.html" %}</div>
+{% endblock %}

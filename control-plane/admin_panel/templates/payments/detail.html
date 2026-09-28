@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/payments">پرداخت‌ها</a>
+    <a class="active" href="/admin/payments/{{ attempt.id }}">{{ attempt.id[:8] }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <span class="tag {{ PAYMENT_STATUS_TAG.get(attempt.status, '') }} tag-lg">
+    {{ PAYMENT_STATUS_FA.get(attempt.status, attempt.status) }}
+  </span>
+  <div class="detail-actions">
+    {% if attempt.status == 'APPROVED' %}
+      <a class="btn-ghost" href="/admin/orders/{{ order.id }}">مشاهده‌ی سفارش</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>پرداخت</h2>
+    <div class="fields">
+      {{ m.field("مبلغ", format_price(attempt.amount, attempt.currency)) }}
+      {{ m.field("روش", {"manual_proof": "دستی", "stars": "ستارز", "gateway": "درگاه"}.get(attempt.method, attempt.method)) }}
+      {{ m.field("کد پیگیری", '<span class="mono">' ~ (attempt.external_reference or '—') ~ '</span>' | safe) }}
+      {{ m.field("ثبت", fmt_dt(attempt.created_at)) }}
+      {{ m.field("بررسی", fmt_dt(attempt.reviewed_at)) }}
+      {% if attempt.rejection_reason %}{{ m.field("دلیل رد", attempt.rejection_reason) }}{% endif %}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>سفارش و مشتری</h2>
+    <div class="fields">
+      {{ m.field("سفارش", '<a class="mono" href="/admin/orders/' ~ order.id ~ '">' ~ order.id[:8] ~ '</a>' | safe if order else None) }}
+      {{ m.field("پلن", plan.name if plan else None) }}
+      {{ m.field("مشتری", customer.display_name if customer else None) }}
+      {{ m.field("شناسه‌ی تلگرام", '<span class="mono">' ~ (customer.telegram_user_id if customer else '—') ~ '</span>' | safe) }}
+      {% if customer %}
+        <div class="actions">
+          <a class="btn-ghost btn-sm" href="/admin/customers/{{ customer.id }}">پروفایل مشتری</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# The refund form is where the module's rule is made visible: a refund that
+   leaves the VPN running is not a refund. The checkbox is checked by default
+   and the button says what it does. #}
+{% if attempt.status == 'APPROVED' %}
+<div class="box box-narrow">
+  <h2>بازپرداخت</h2>
+  <p class="muted">
+    ثبت بازپرداخت فقط دفترداری است. چیزی که واقعاً به مشتری بدهکاریم این است که
+    سرویسی را که دیگر پولش را نمی‌دهد دریافت نکند — پس گزینه‌ی زیر به‌صورت پیش‌فرض
+    روشن است و کانفیگ را در همان درخواست غیرفعال می‌کند.
+  </p>
+  <form method="post" action="/admin/payments/{{ attempt.id }}/refund" data-confirm="این پرداخت بازپرداخت شود؟">
+    <label for="reason">دلیل بازپرداخت</label>
+    <textarea id="reason" name="reason" rows="3"
+              placeholder="مثلاً: درخواست مشتری پس از قطعی مکرر."></textarea>
+
+    <label for="reference">کد پیگیری بازپرداخت</label>
+    <input id="reference" name="reference" type="text" dir="ltr"
+           placeholder="شماره‌ی تراکنش برگشتی">
+
+    <label class="check">
+      <input type="checkbox" name="revoke" value="1" checked>
+      اشتراک این پرداخت هم غیرفعال شود
+    </label>
+
+    <div class="actions">
+      <button class="btn-bad" type="submit">ثبت بازپرداخت</button>
+      <a class="btn-ghost" href="/admin/payments">انصراف</a>
+    </div>
+  </form>
+</div>
+{% elif attempt.status == 'REFUNDED' %}
+<div class="box">
+  <h2>اشتراک</h2>
+  {% if config %}
+    <div class="fields">
+      {{ m.field("کانفیگ", '<a class="mono" href="/admin/configurations/' ~ config.id ~ '">' ~ config.display_name ~ '</a>' | safe) }}
+      {{ m.field("وضعیت", CONFIG_STATUS_FA.get(config.status, config.status)) }}
+    </div>
+    {% if config.status != 'DELETED' %}
+      <div class="alert alert-warn">
+        این پرداخت بازپرداخت شده ولی کانفیگ آن حذف نشده است. اگر مشتری نباید
+        سرویس بگیرد، از صفحه‌ی کانفیگ آن را لغو کنید.
+      </div>
+      <div class="actions">
+        <a class="btn-bad btn-sm" href="/admin/configurations/{{ config.id }}">مدیریت کانفیگ</a>
+      </div>
+    {% endif %}
+  {% else %}
+    {{ m.empty_state("این پرداخت اشتراکی نساخته بود.") }}
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

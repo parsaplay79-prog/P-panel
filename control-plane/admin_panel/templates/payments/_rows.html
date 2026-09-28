@@ -1,0 +1,56 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "created", "ثبت") }}
+        <th>سفارش</th>
+        <th>مشتری</th>
+        <th>پلن</th>
+        <th>مبلغ</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        {{ m.sort_header(query, base_path, "reviewed", "بررسی") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="mono sm">{{ fmt_dt(item.attempt.created_at) }}</td>
+          <td><a class="mono" href="/admin/orders/{{ item.order.id }}">{{ item.ref }}</a></td>
+          <td>
+            <a href="/admin/customers/{{ item.customer.id }}">{{ item.customer.display_name or item.customer.telegram_user_id }}</a>
+          </td>
+          <td>{{ item.plan.name }}</td>
+          <td class="num">{{ format_price(item.attempt.amount, item.attempt.currency) }}</td>
+          <td>
+            <span class="tag {{ PAYMENT_STATUS_TAG.get(item.attempt.status, '') }}">
+              {{ PAYMENT_STATUS_FA.get(item.attempt.status, item.attempt.status) }}
+            </span>
+          </td>
+          <td class="mono sm">{{ fmt_dt(item.attempt.reviewed_at) }}</td>
+          <td class="row-actions">
+            {# The refund link is only offered where the route would accept it.
+               A REFUNDED attempt is terminal; showing a disabled-looking button
+               that 404s is worse than showing nothing. #}
+            {% if item.attempt.status == 'APPROVED' %}
+              <a class="btn-bad btn-sm" href="/admin/payments/{{ item.attempt.id }}">بازپرداخت</a>
+            {% else %}
+              <a class="btn-ghost btn-sm" href="/admin/payments/{{ item.attempt.id }}">جزئیات</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("پرداختی با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/payments", page, query) }}

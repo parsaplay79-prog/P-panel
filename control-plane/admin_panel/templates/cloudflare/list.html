@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/cloudflare">حساب‌های Cloudflare</a>
+    <a href="/admin/nodes">نودها</a>
+    <a class="btn-ok btn-sm" href="/admin/cloudflare/new">حساب جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set status_options = [] %}
+{% for value, label in ACCOUNT_STATUS_FA.items() %}
+  {% set _ = status_options.append((value, label)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/cloudflare", query,
+              {"status": status_options},
+              "جست‌وجوی برچسب یا شناسه‌ی حساب…") }}
+
+  <div id="rows">{% include "cloudflare/_rows.html" %}</div>
+{% endblock %}

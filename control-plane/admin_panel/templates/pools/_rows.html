@@ -1,0 +1,64 @@
+{% import "_macros.html" as m %}
+{% if pools %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "استخر") }}
+        <th>تگ‌های قابلیت</th>
+        {{ m.sort_header(query, base_path, "strategy", "روش انتخاب") }}
+        {{ m.sort_header(query, base_path, "health", "کف سلامت", numeric=true) }}
+        {{ m.sort_header(query, base_path, "cap", "سقف هر نود", numeric=true) }}
+        <th class="num">نودها</th>
+        <th class="num">پلن‌ها</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for pool in pools %}
+        {% set node_count = node_counts.get(pool.id, 0) %}
+        {% set plan_count = plan_counts.get(pool.id, 0) %}
+        <tr>
+          <td><a href="/admin/pools/{{ pool.id }}">{{ pool.name }}</a></td>
+          <td>
+            {% if pool.capability_tags %}
+              {% for tag in pool.capability_tags %}<span class="tag">{{ tag }}</span> {% endfor %}
+            {% else %}
+              <span class="muted sm">همه‌ی نودها</span>
+            {% endif %}
+          </td>
+          <td class="muted sm">{{ STRATEGY_FA.get(pool.selection_strategy, pool.selection_strategy) }}</td>
+          <td class="num">{{ pool.min_health_score | int }}</td>
+          <td class="num">{{ pool.max_customers_per_node }}</td>
+          <td class="num">
+            {% if node_count %}<a href="/admin/nodes?pool={{ pool.id }}">{{ node_count }}</a>
+            {% else %}<span class="tag tag-bad">۰</span>{% endif %}
+          </td>
+          <td class="num">{{ plan_count }}</td>
+          <td class="row-actions">
+            <a class="btn-ghost btn-sm" href="/admin/pools/{{ pool.id }}/edit">ویرایش</a>
+            {# A pool with a plan or a node cannot be deleted, so the button is
+               hidden rather than shown-and-failing: `plans.pool_id` is NOT NULL,
+               and a delete that always errors teaches operators to ignore
+               errors. The detail page explains the refusal when it happens. #}
+            {% if not node_count and not plan_count %}
+              {{ m.confirm_form("/admin/pools/" ~ pool.id ~ "/delete", "حذف",
+                                confirm_text="استخر «" ~ pool.name ~ "» حذف شود؟",
+                                cls="btn-ghost btn-sm") }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("استخری با این شرایط نیست.",
+                  "هر پلن باید به یک استخر وصل باشد؛ بدون استخر، هیچ مشتری‌ای سرویس نمی‌گیرد.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/pools", page, query) }}

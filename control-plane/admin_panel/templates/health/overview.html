@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/nodes">نودها</a>
+    <a class="active" href="/admin/health">سلامت</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# All three parts, because each one alone misleads: the verdict is what the
+   platform believes now, the samples are how it got there, and the counters are
+   what decides the next transition. Without the counters, "why has failover not
+   happened yet" is unanswerable from the panel. #}
+<div class="alert alert-info">
+  <b>قاعده‌ی گذار:</b>
+  بررسی هر <b>{{ HEALTH_CHECK_INTERVAL }} ثانیه</b>؛
+  پس از <b>{{ DEGRADED_AFTER_FAILURES }}</b> شکست پیاپی → افت کیفیت؛
+  پس از <b>{{ OFFLINE_AFTER_FAILURES }}</b> شکست پیاپی → آفلاین؛
+  پس از <b>{{ ONLINE_AFTER_SUCCESSES }}</b> موفقیت پیاپی → آنلاین؛
+  و failover <b>{{ (FAILOVER_AFTER_OFFLINE.total_seconds() // 60) | int }} دقیقه</b>
+  پس از آفلاین‌شدن.
+  نودی که در وضعیت {{ OPERATOR_HELD_STATES | join('، ') }} باشد، از همه‌ی این‌ها
+  <b>معاف</b> است.
+</div>
+
+{% if gaming_settings %}
+  <div class="muted sm">
+    نودهای دارای تگ <span class="mono">gaming</span> آستانه‌های پروفایل گیمینگ فعال را
+    دنبال می‌کنند؛ بقیه‌ی نودها پیش‌فرض را. اعداد هر نود در جدول زیر، همان اعدادی
+    است که در حلقه‌ی سلامت اعمال می‌شود.
+  </div>
+{% endif %}
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>نود</th><th>وضعیت</th><th class="num">امتیاز</th>
+      <th class="num">شکست پیاپی</th><th class="num">موفقیت پیاپی</th>
+      <th class="num">آپ‌تایم ۲۴ ساعت</th>
+      <th>آخرین بررسی</th><th>آستانه‌ی مؤثر</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+      <tr>
+        <td>
+          <a href="/admin/health/{{ item.node.id }}">{{ item.node.worker_script_name }}</a>
+          {% if item.held %}<span class="tag tag-warn">دست اپراتور</span>{% endif %}
+        </td>
+        <td>
+          <span class="tag {{ NODE_STATE_TAG.get(item.node.state, '') }}">
+            {{ NODE_STATE_FA.get(item.node.state, item.node.state) }}
+          </span>
+        </td>
+        <td class="num">{{ item.node.health_score | int }}</td>
+        <td class="num">
+          {% if item.node.consecutive_failures >= OFFLINE_AFTER_FAILURES %}
+            <span class="bad">{{ item.node.consecutive_failures }}</span>
+          {% elif item.node.consecutive_failures >= DEGRADED_AFTER_FAILURES %}
+            <span class="warn">{{ item.node.consecutive_failures }}</span>
+          {% else %}
+            {{ item.node.consecutive_failures }}
+          {% endif %}
+        </td>
+        <td class="num">{{ item.node.consecutive_successes }}</td>
+        <td class="num">
+          {% if item.uptime is none %}
+            <span class="muted sm">بدون نمونه</span>
+          {% else %}
+            <div class="usage-line">
+              <span>{{ item.uptime }}%</span>
+              <div class="bar">
+                <div class="bar-fill{% if item.uptime < 90 %} bar-bad{% elif item.uptime < 99 %} bar-warn{% endif %}"
+                     style="width: {{ item.uptime }}%"></div>
+              </div>
+              <span class="muted sm">{{ item.reliability.ok }}/{{ item.reliability.total }}</span>
+            </div>
+          {% endif %}
+        </td>
+        <td class="mono sm">
+          {% if item.sample %}
+            {{ fmt_dt(item.sample.checked_at) }}
+            {% if item.sample.success %}
+              <span class="tag tag-ok">موفق</span>
+            {% else %}
+              <span class="tag tag-bad">ناموفق</span>
+            {% endif %}
+            {% if item.sample.latency_ms is not none %}
+              <div class="muted sm">{{ item.sample.latency_ms | int }}ms</div>
+            {% endif %}
+          {% else %}
+            <span class="muted sm">—</span>
+          {% endif %}
+        </td>
+        <td class="muted sm">
+          {{ item.thresholds.degraded_after_failures }}/{{ item.thresholds.offline_after_failures }}/{{ item.thresholds.online_after_successes }}
+          <div class="muted sm">
+            failover: {{ (item.thresholds.failover_after_offline.total_seconds() // 60) | int }} دقیقه
+          </div>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if not items %}
+  {{ m.empty_state("هیچ نودی وجود ندارد.", "با ساخت نود، بررسی سلامت شروع می‌شود.") }}
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% set p = request.query_params %}
+{% set val_label = p.get('label') or '' %}
+{% set val_account = p.get('cf_account_id') or '' %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/cloudflare">حساب‌های Cloudflare</a>
+    <a class="active" href="#">حساب جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# The order of this form is the design. Document 1 §M: "Check permissions
+   actually granted match what's required; reject early with a clear reason."
+   Nothing is stored until the token has been proved alive, scoped, and able to
+   provision — because the failure this replaces was an opaque 403 in the middle
+   of node provisioning, after a KV namespace already existed. #}
+<div class="alert alert-info">
+  هنگام ثبت، توکن با Cloudflare بررسی می‌شود: زنده بودن، دسترسی به حساب، و
+  داشتن دو دسترسی نوشتن موردنیاز (Workers Scripts و Workers KV). اگر چیزی کم
+  باشد، همان‌جا با پیام خود Cloudflare رد می‌شود — پیش از آنکه چیزی ساخته شود.
+</div>
+
+<form method="post" action="/admin/cloudflare/new" class="form-page box">
+  <label for="label">برچسب</label>
+  <input id="label" name="label" type="text" required maxlength="60"
+         value="{{ val_label }}" placeholder="حساب اصلی">
+  <div class="muted sm">فقط برای خودتان؛ در فهرست نودها و حساب‌ها دیده می‌شود.</div>
+
+  <label for="api_token">توکن API</label>
+  <input id="api_token" name="api_token" type="password" required dir="ltr"
+         autocomplete="off" spellcheck="false">
+  <div class="muted sm">
+    توکن را در Cloudflare با دسترسی <span class="mono">Workers Scripts: Edit</span> و
+    <span class="mono">Workers KV Storage: Edit</span> بسازید. مقدار توکن ذخیره‌ی
+    رمزشده می‌شود و هیچ‌جا — نه در گزارش رویدادها، نه در لاگ — به‌صورت متن ساده
+    نوشته نمی‌شود.
+  </div>
+
+  <label for="cf_account_id">شناسه‌ی حساب (اختیاری)</label>
+  <input id="cf_account_id" name="cf_account_id" type="text" dir="ltr"
+         value="{{ val_account }}" placeholder="خالی بگذارید تا خودکار پیدا شود">
+  <div class="muted sm">
+    اگر توکن فقط به یک حساب دسترسی داشته باشد، خالی گذاشتن کافی است. اگر توکن به
+    چند حساب دسترسی داشته باشد، پنل عمداً انتخاب نمی‌کند و شناسه را از شما
+    می‌خواهد — چون انتخاب «اولی» نودی می‌سازد در حسابی که شما انتخابش نکرده‌اید.
+  </div>
+
+  <div class="actions">
+    <button class="btn-ok" type="submit">بررسی و ثبت</button>
+    <a class="btn-ghost" href="/admin/cloudflare">انصراف</a>
+  </div>
+</form>
+{% endblock %}

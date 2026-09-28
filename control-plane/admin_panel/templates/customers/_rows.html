@@ -1,0 +1,50 @@
+{% import "_macros.html" as m %}
+{% if customers %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>مشتری</th>
+        <th>شناسه‌ی تلگرام</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        <th>کانفیگ‌ها</th>
+        {{ m.sort_header(query, base_path, "last_seen", "آخرین تعامل") }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for customer in customers %}
+        {% set count = counts.get(customer.id, {"total": 0, "active": 0}) %}
+        <tr>
+          <td>
+            <a href="/admin/customers/{{ customer.id }}">{{ customer.display_name or '—' }}</a>
+            {% if customer.telegram_username %}
+              <div class="muted sm" dir="ltr">@{{ customer.telegram_username }}</div>
+            {% endif %}
+          </td>
+          <td class="mono">{{ customer.telegram_user_id }}</td>
+          <td>
+            <span class="tag {{ 'tag-bad' if customer.status == 'banned' else 'tag-ok' }}">
+              {{ CUSTOMER_STATUS_FA.get(customer.status, customer.status) }}
+            </span>
+          </td>
+          <td class="num">
+            {{ count.active }} فعال
+            {% if count.total != count.active %}
+              <span class="muted sm">از {{ count.total }}</span>
+            {% endif %}
+          </td>
+          <td class="mono sm">{{ fmt_dt(customer.last_interaction_at) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("مشتری‌ای با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/customers", page, query) }}

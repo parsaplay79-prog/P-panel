@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/gaming">پروفایل‌های گیمینگ</a>
+    <a class="active" href="#">انتشار نسخه‌ی جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# Pre-filled from the CURRENT profile, not from DEFAULT_SETTINGS. Starting from
+   the defaults would silently revert every tuning made since they shipped, and
+   the operator would have no way to see that they had. #}
+<div class="alert alert-info">
+  نسخه‌ی جدید از روی نسخه‌ی فعال فعلی (<b>{% if profile %}v{{ profile.version }}{% else %}پیش‌فرض{% endif %}</b>)
+  پر شده است. انتشار، نسخه‌ی قبلی را تغییر <b>نمی‌دهد</b>؛ یک ردیف جدید با شماره‌ی
+  بعدی ساخته می‌شود.
+</div>
+
+<form method="post" action="/admin/gaming/publish" class="form-page box">
+  <label for="name">نام پروفایل</label>
+  <input id="name" name="name" type="text" required maxlength="60" value="{{ name }}">
+  <div class="muted sm">
+    نام، نسخه‌ها را به هم می‌بندد. با همین نام منتشر کنید تا نسخه‌ی بعدی همان
+    زنجیره شود؛ نام تازه یعنی یک پروفایل جدا.
+  </div>
+
+  <label for="settings_json">تنظیمات (JSON)</label>
+  <textarea id="settings_json" name="settings_json" rows="18" dir="ltr" spellcheck="false"
+            class="mono">{{ settings_text }}</textarea>
+  <div class="muted sm">
+    فرم فیلدبه‌فیلد عمداً وجود ندارد: مجموعه‌ی تنظیمات باز است و دو مصرف‌کننده‌ی
+    مختلف آن را می‌خوانند، پس فرمی با چهار فیلد ثابت هر فیلد پنجمی را در آینده
+    بی‌صدا حذف می‌کرد.
+  </div>
+
+  <div class="alert alert-warn">
+    <b>قابلیت‌هایی که Cloudflare Workers ندارد:</b>
+    {% for key in FORBIDDEN_KEYS %}<span class="mono">{{ key }}</span>{% if not loop.last %}، {% endif %}{% endfor %}.
+    اگر یکی از این‌ها در تنظیمات باشد، انتشار رد می‌شود — چون دیتاپلین نمی‌تواند
+    آن را اجرا کند و پنلی که چنین چیزی را می‌پذیرد دارد به شما دروغ می‌گوید.
+  </div>
+
+  <div class="actions">
+    <button class="btn-ok" type="submit">انتشار نسخه</button>
+    <a class="btn-ghost" href="/admin/gaming">انصراف</a>
+  </div>
+</form>
+{% endblock %}

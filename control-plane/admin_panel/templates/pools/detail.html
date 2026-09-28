@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/pools">استخرها</a>
+    <a class="active" href="/admin/pools/{{ pool.id }}">{{ pool.name }}</a>
+    <a href="/admin/pools/{{ pool.id }}/edit">ویرایش</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ pool.name }}</h1>
+  <div class="detail-actions">
+    <a class="btn-ghost btn-sm" href="/admin/pools/{{ pool.id }}/edit">ویرایش</a>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>تنظیمات</h2>
+    <div class="fields">
+      {{ m.field("روش انتخاب", STRATEGY_FA.get(pool.selection_strategy, pool.selection_strategy)) }}
+      {{ m.field("کف امتیاز سلامت", pool.min_health_score | int) }}
+      {{ m.field("سقف مشتری هر نود", pool.max_customers_per_node) }}
+      {{ m.field("نود پشتیبان", pool.backup_count) }}
+      {{ m.field("تگ‌های قابلیت",
+                 pool.capability_tags | join('، ') if pool.capability_tags else 'همه‌ی نودها') }}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>پلن‌های روی این استخر</h2>
+    {% if plans %}
+      <table>
+        <thead><tr><th>پلن</th><th class="num">قیمت</th><th>وضعیت</th></tr></thead>
+        <tbody>
+          {% for plan in plans %}
+            <tr>
+              <td><a href="/admin/plans/{{ plan.id }}/edit">{{ plan.name }}</a></td>
+              <td class="num">{{ format_price(plan.price_amount, plan.price_currency) }}</td>
+              <td>
+                {% if plan.is_active %}<span class="tag tag-ok">فعال</span>
+                {% else %}<span class="tag">غیرفعال</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("هیچ پلنی به این استخر وصل نیست.",
+                      "تا وقتی پلنی اینجا نباشد، این استخر هیچ مشتری‌ای نمی‌گیرد.") }}
+    {% endif %}
+  </div>
+</div>
+
+{# The eligibility table is the reason this page exists. `select_node_for_pool`
+   returns None for five different reasons and reports none of them; the
+   operator staring at a pool that serves nobody needs the reason, not the
+   boolean. #}
+<div class="box">
+  <h2>اعضای استخر</h2>
+  {% if members %}
+    <table>
+      <thead>
+        <tr>
+          <th>نود</th><th>وضعیت</th><th class="num">بار</th>
+          <th class="num">سلامت</th><th>قابل انتخاب؟</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in members %}
+          <tr>
+            <td><a href="/admin/nodes/{{ item.node.id }}">{{ item.node.worker_script_name }}</a></td>
+            <td class="muted sm">{{ item.node.state }}</td>
+            <td class="num">{{ item.node.current_assignment_count }}/{{ [item.node.max_assignment_count, pool.max_customers_per_node] | min }}</td>
+            <td class="num">{{ item.node.health_score | int }}</td>
+            <td>
+              {% if item.eligible %}
+                <span class="tag tag-ok">بله</span>
+              {% else %}
+                <span class="tag tag-warn">خیر</span>
+                <div class="muted sm">
+                  {% for reason in item.reasons %}{{ reason }}{% if not loop.last %}؛ {% endif %}{% endfor %}
+                </div>
+              {% endif %}
+            </td>
+            <td class="row-actions">
+              {# Removing membership does not move anyone: existing assignments
+                 stay on the node. The route refuses while the node is loaded,
+                 and names the count, so "drain this node" and "take it out of
+                 service" stay distinguishable. #}
+              {{ m.confirm_form("/admin/pools/" ~ pool.id ~ "/nodes/remove", "حذف از استخر",
+                                {"node_id": item.node.id},
+                                confirm_text="این نود از استخر خارج شود؟ مشتری‌های فعلی روی آن می‌مانند.",
+                                cls="btn-ghost btn-sm") }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("هیچ نودی عضو این استخر نیست.",
+                    "استخری بدون نود به هر درخواست سرویس «نود مناسب پیدا نشد» برمی‌گرداند.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>افزودن نود</h2>
+  {% if non_members %}
+    <div class="alert alert-info">
+      افزودن نود <b>بدون بررسی شرایط</b> انجام می‌شود. عضویت و شایستگی دو سؤال
+      جدا هستند: نود می‌تواند عضو باشد ولی موقتاً واجد شرایط نباشد (آفلاین، پر،
+      در حال تعمیر). این کار عمدی است تا بتوانید سخت‌افزار را از قبل آماده کنید —
+      دلیل عدم شایستگی در جدول بالا نمایش داده می‌شود.
+    </div>
+    <table>
+      <thead><tr><th>نود</th><th>وضعیت</th><th>چرا فعلاً واجد شرایط نیست</th><th></th></tr></thead>
+      <tbody>
+        {% for item in non_members %}
+          <tr>
+            <td><a href="/admin/nodes/{{ item.node.id }}">{{ item.node.worker_script_name }}</a></td>
+            <td class="muted sm">{{ item.node.state }}</td>
+            <td class="muted sm">
+              {% if item.reasons %}
+                {% for reason in item.reasons %}{{ reason }}{% if not loop.last %}؛ {% endif %}{% endfor %}
+              {% else %}
+                <span class="tag tag-ok">واجد شرایط — فقط عضو نیست</span>
+              {% endif %}
+            </td>
+            <td class="row-actions">
+              {{ m.post_form("/admin/pools/" ~ pool.id ~ "/nodes/add", "افزودن",
+                             {"node_id": item.node.id}) }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("همه‌ی نودهای موجود عضو این استخر هستند.") }}
+  {% endif %}
+</div>
+
+<div class="box box-bad">
+  <h2>حذف استخر</h2>
+  <p class="muted">
+    استخری که پلن یا نود دارد حذف نمی‌شود: هر پلن باید به یک استخر وصل بماند، و
+    حذف استخرِ یک پلن، آن پلن را در زمان فروش به بن‌بست «نود مناسب پیدا نشد»
+    می‌برد. ابتدا پلن‌ها را به استخر دیگری منتقل کنید و نودها را بردارید.
+  </p>
+  {{ m.confirm_form("/admin/pools/" ~ pool.id ~ "/delete", "حذف استخر",
+                    confirm_text="استخر «" ~ pool.name ~ "» حذف شود؟") }}
+</div>
+
+{% endblock %}

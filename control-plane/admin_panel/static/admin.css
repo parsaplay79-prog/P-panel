@@ -1,3 +1,25 @@
+/* Verdent Platform — admin panel stylesheet.
+ *
+ * No build step and no framework: the panel ships as one file the Dockerfile
+ * already copies. Everything here is hand-written because the surface is
+ * fixed — twenty-odd pages that all share the same toolbar, table, tag and
+ * alert vocabulary.
+ *
+ * Two structural decisions worth knowing before editing:
+ *
+ *   1. The page is RTL (`dir="rtl"` on <html>), so "start"/"end" in a comment
+ *      means right/left. Anything with a physical direction — a border, a
+ *      padding — is written out rather than using logical properties, because
+ *      the panel targets one direction and physical properties are what a
+ *      reader of the template can predict.
+ *
+ *   2. Monospace runs (ids, tokens, URIs, timestamps) are forced LTR. A UUID
+ *      or an https:// URL rendered inside an RTL paragraph has its punctuation
+ *      reordered — "a1b2-.../x" reads backwards and an operator copying it by
+ *      eye transposes characters. `.mono` and `code` therefore set `direction`
+ *      explicitly, and `pre.uri` does it for whole blocks.
+ */
+
 :root {
   --bg: #0f1420;
   --panel: #171d2c;
@@ -38,16 +60,58 @@ code, .mono {
   font-size: 0.92em;
 }
 
+/* A JSON or error block: it must not be re-wrapped into the page's RTL flow,
+   and it must scroll rather than widen the layout — a 3000-character error
+   string from Cloudflare would otherwise push the whole page sideways. */
+pre.uri {
+  direction: ltr;
+  text-align: left;
+  background: #0b0f18;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* A whole line that is one identifier — the subscription URI. Selectable in
+   one drag, and LTR so the fragment after `#` is not moved to the front. */
+.uri {
+  direction: ltr;
+  text-align: left;
+  background: #0b0f18;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.link { background: transparent; border: 0; padding: 0; }
+
+.muted { color: var(--muted); }
+.sm { font-size: 12.5px; }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------------
+   Layout: sidebar + main
+--------------------------------------------------------------------------- */
+
 .layout { display: flex; min-height: 100vh; }
 
-/* ---- sidebar ---- */
 .sidebar {
-  width: 240px;
-  flex: 0 0 240px;
+  width: 244px;
+  flex: 0 0 244px;
   background: var(--panel);
   border-left: 1px solid var(--border);
   padding: 18px 12px;
 }
+
 .brand {
   font-weight: 700;
   font-size: 18px;
@@ -56,15 +120,27 @@ code, .mono {
   margin-bottom: 14px;
 }
 .brand small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+
+/* The nav is grouped by area of responsibility, which is how the roles are
+   cut — a role sees one contiguous block, not a scattered handful of links. */
+.nav-group { margin-bottom: 14px; }
+.nav-group-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  padding: 0 10px 5px;
+}
 .nav a {
   display: block;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius);
   color: var(--text);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
+  font-size: 14px;
 }
 .nav a:hover { background: var(--panel-2); text-decoration: none; }
 .nav a.active { background: var(--accent-2); }
+
 .who {
   margin-top: 18px;
   padding: 12px;
@@ -72,30 +148,113 @@ code, .mono {
   color: var(--muted);
   font-size: 13px;
 }
+.who-role { color: var(--text); font-weight: 600; }
+.who form { margin-top: 8px; }
 
-/* ---- main ---- */
-.main { flex: 1; padding: 26px 30px; max-width: 1100px; }
+.main { flex: 1; padding: 26px 30px 60px; max-width: 1180px; min-width: 0; }
 h1 { font-size: 22px; margin: 0 0 6px; }
-h2 { font-size: 17px; margin: 26px 0 10px; }
+h2 { font-size: 17px; margin: 0 0 12px; }
+h3 { font-size: 15px; margin: 0 0 10px; }
+
+/* Breadcrumb row under the title: "Queue / order / reject". Present on every
+   detail page so an operator who arrived by a deep link can walk back up. */
+.sub-nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 2px 0 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.sub-nav a { color: var(--muted); }
+.sub-nav a.active { color: var(--text); font-weight: 600; }
+.sub-nav a:hover { color: var(--accent); text-decoration: none; }
+
+/* The sentence under a page title that says what the page is for. */
+.lede { color: var(--muted); font-size: 14px; margin: 0 0 18px; max-width: 78ch; }
 .sub { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
 
-.cards { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; }
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.detail-head h1 { margin: 0; }
+.detail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+/* ---------------------------------------------------------------------------
+   Cards — the dashboard's numbers
+--------------------------------------------------------------------------- */
+
+.cards { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 20px;
-  min-width: 170px;
-  flex: 1 1 170px;
+  padding: 14px 18px;
+  min-width: 168px;
+  flex: 1 1 168px;
 }
-.card .num { font-size: 30px; font-weight: 700; }
+/* A card that is a link must not underline its whole body on hover — the
+   affordance is the border, not a text decoration across three lines. */
+.card-link { display: block; color: var(--text); }
+.card-link:hover { border-color: var(--accent); text-decoration: none; }
+.card .num { font-size: 30px; font-weight: 700; line-height: 1.3; }
+.card .num.warn { color: var(--warn); }
+.card .num.bad { color: var(--bad); }
 .card .lbl { color: var(--muted); font-size: 13px; }
+.card .of { color: var(--muted); font-size: 12.5px; }
 
-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-th, td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 500; font-size: 13px; }
-tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--panel-2); }
+/* ---------------------------------------------------------------------------
+   The traffic light — the one verdict on the dashboard
+--------------------------------------------------------------------------- */
+
+.light {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-right: 5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 18px;
+}
+.light-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 16px;
+}
+.light-label { font-weight: 700; font-size: 17px; }
+.light-detail { color: var(--muted); font-size: 13.5px; }
+/* Pushed to the far end (left, in RTL) so the timestamp never competes with
+   the verdict for the reader's first glance. */
+.light-time { margin-inline-start: auto; color: var(--muted); font-size: 12px; }
+
+.light-ok { border-right-color: var(--ok); }
+.light-ok .light-dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(53, 199, 123, 0.16); }
+.light-warn { border-right-color: var(--warn); }
+.light-warn .light-dot { background: var(--warn); box-shadow: 0 0 0 4px rgba(232, 163, 61, 0.16); }
+.light-bad { border-right-color: var(--bad); }
+.light-bad .light-dot { background: var(--bad); box-shadow: 0 0 0 4px rgba(224, 92, 92, 0.16); }
+
+/* ---------------------------------------------------------------------------
+   Boxes
+--------------------------------------------------------------------------- */
 
 .box {
   background: var(--panel);
@@ -104,7 +263,241 @@ tbody tr:hover { background: var(--panel-2); }
   padding: 18px 20px;
   margin-bottom: 16px;
 }
-.box h3 { margin: 0 0 12px; font-size: 15px; }
+.box-bad { border-color: #8a3030; }
+/* For a single narrow form (a rejection reason, a refund confirmation): a
+   full-width field for a two-line answer reads as a form the operator has to
+   fill in, not one they are answering. */
+.box-narrow { max-width: 620px; }
+
+/* Capacity. The bar is the point: "3 of 200" is a number, but the bar is what
+   says "this is nearly full" at a glance. */
+.capacity-box { margin-bottom: 18px; }
+.capacity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.capacity-head h2 { margin: 0; }
+.capacity-nums { color: var(--muted); font-size: 13.5px; }
+.capacity-nums b { color: var(--text); }
+.bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--ok);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+.bar-warn { background: var(--warn); }
+.bar-bad { background: var(--bad); }
+
+/* ---------------------------------------------------------------------------
+   Definition lists (detail pages)
+--------------------------------------------------------------------------- */
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 20px;
+}
+.field-label { color: var(--muted); font-size: 12.5px; }
+.field-value { word-break: break-word; }
+
+/* ---------------------------------------------------------------------------
+   Tables
+--------------------------------------------------------------------------- */
+
+/* The wrapper is what scrolls, not the page: a wide table on a laptop would
+   otherwise give the entire panel a horizontal scrollbar. */
+.table-wrap { overflow-x: auto; margin-bottom: 4px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th, td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; white-space: nowrap; }
+td.num, th.num { text-align: left; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--panel-2); }
+
+/* Two-column "label | value" table (the dashboard's drill-down blocks). */
+table.kv th { color: var(--muted); font-weight: 400; white-space: normal; }
+table.kv td { text-align: left; }
+
+.row-actions { white-space: nowrap; }
+.row-actions form { display: inline; }
+.row-actions > * + * { margin-inline-start: 4px; }
+
+/* ---------------------------------------------------------------------------
+   Toolbar: search + filters
+--------------------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.toolbar input[type="search"] { flex: 1 1 260px; min-width: 200px; }
+.toolbar select { flex: 0 1 190px; width: auto; }
+.toolbar button { margin: 0; }
+
+/* Shown by HTMX only while a request is in flight (hx-indicator). Without
+   this rule the span sits in the toolbar permanently saying "searching…". */
+.toolbar-loading { display: none; color: var(--muted); font-size: 12.5px; }
+.htmx-request .toolbar-loading,
+.toolbar-loading.htmx-request { display: inline; }
+
+/* A sortable header. The indicator is a separate span so the arrow does not
+   shift the column width when the sort flips. */
+.sort { color: var(--muted); }
+.sort:hover { color: var(--text); text-decoration: none; }
+.sort-ind { margin-inline-start: 4px; font-size: 10px; }
+
+/* ---------------------------------------------------------------------------
+   Pager
+--------------------------------------------------------------------------- */
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  font-size: 13px;
+}
+.pager-range { color: var(--muted); }
+.pager-nav { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.pager-nav .current { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
+.disabled { opacity: 0.4; pointer-events: none; }
+
+/* ---------------------------------------------------------------------------
+   Tags
+--------------------------------------------------------------------------- */
+
+.tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tag-ok { color: var(--ok); border-color: #1f8f56; }
+.tag-warn { color: var(--warn); border-color: #8a6220; }
+.tag-bad { color: var(--bad); border-color: #8a3030; }
+.tag-lg { font-size: 13.5px; padding: 4px 14px; }
+.tags-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+/* ---------------------------------------------------------------------------
+   Alerts — explanatory prose as much as status
+--------------------------------------------------------------------------- */
+
+.alert { border-radius: 8px; padding: 11px 15px; margin-bottom: 16px; border: 1px solid; }
+.alert-ok { border-color: #1f8f56; background: #12281c; color: #b8e6cd; }
+.alert-bad { border-color: #8a3030; background: #2a1414; color: #f0c2c2; }
+.alert-warn { border-color: #8a6220; background: #2a2313; color: #f0ddb8; }
+.alert-info { border-color: #2a3346; background: var(--panel); color: var(--muted); }
+.alert-info b { color: var(--text); }
+
+/* ---------------------------------------------------------------------------
+   Empty states
+--------------------------------------------------------------------------- */
+
+.empty { color: var(--muted); padding: 26px 0; text-align: center; }
+.empty-text { font-size: 15px; }
+.empty-hint { font-size: 13px; margin-top: 6px; }
+
+/* ---------------------------------------------------------------------------
+   Actions, inline forms, checkboxes
+--------------------------------------------------------------------------- */
+
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.actions form { display: inline; margin: 0; }
+.actions button { margin: 0; }
+
+/* A form that lives inside a table cell or a row of buttons must not inherit
+   the block-level margins of a page form. */
+.inline { display: inline-block; margin: 0; }
+.inline form, form.inline { display: inline; }
+
+.inline-box {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* A checkbox with its label on one line. `label { display: block }` below is
+   right for text inputs and wrong here — it would drop the box above its own
+   caption. */
+label.inline-check, .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+label.inline-check input, .check input { width: auto; margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   Attempts, proofs, usage lines
+--------------------------------------------------------------------------- */
+
+/* One event in a timeline — a ticket message, an order's payment attempt, a
+   health sample run. */
+.attempt {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: var(--panel-2);
+}
+.attempt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+/* Receipt images / payment proofs. Side by side, each capped so a tall phone
+   screenshot cannot take over the page. */
+.proofs { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.proof { max-width: 220px; }
+.proof img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+
+/* A single "used of quota" line: the number, the cap, and the bar between
+   them. Used on the usage pages and the config detail. */
+.usage-line { margin: 8px 0; font-size: 13.5px; }
+.usage-line .bar { margin-top: 6px; }
+
+/* A destructive action set apart at the bottom of a detail page, so it is
+   never adjacent to the ordinary buttons. */
+.danger-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+/* ---------------------------------------------------------------------------
+   Forms
+--------------------------------------------------------------------------- */
 
 label { display: block; margin: 12px 0 5px; color: var(--muted); font-size: 13px; }
 input, select, textarea {
@@ -118,7 +511,19 @@ input, select, textarea {
   font-size: 15px;
 }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+input[dir="ltr"] { direction: ltr; text-align: left; }
 textarea { min-height: 110px; resize: vertical; }
+textarea.mono, input.mono { font-family: "Cascadia Mono", Consolas, monospace; direction: ltr; text-align: left; }
+
+/* A form page is a box with a readable measure — a 1100px-wide text input is
+   hard to scan and easy to mistype in. */
+.form-page { max-width: 720px; }
+.form-page input, .form-page select, .form-page textarea { max-width: 100%; }
+.form-page .muted { font-size: 12.5px; }
+
+/* ---------------------------------------------------------------------------
+   Buttons
+--------------------------------------------------------------------------- */
 
 button, .btn {
   display: inline-block;
@@ -133,47 +538,24 @@ button, .btn {
   margin-top: 14px;
 }
 button:hover, .btn:hover { background: var(--accent); text-decoration: none; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .btn-ok { background: #1f8f56; }
 .btn-ok:hover { background: var(--ok); color: #06210f; }
 .btn-bad { background: #a83535; }
 .btn-bad:hover { background: var(--bad); }
 .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
-.btn-ghost:hover { background: var(--panel-2); }
+.btn-ghost:hover { background: var(--panel-2); color: var(--text); }
 .btn-sm { padding: 5px 12px; font-size: 13px; margin: 0; }
 
-.tag {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-.tag-ok { color: var(--ok); border-color: #1f8f56; }
-.tag-warn { color: var(--warn); border-color: #8a6220; }
-.tag-bad { color: var(--bad); border-color: #8a3030; }
+/* A form that carries a `data-confirm` is intercepted by admin.js. Marking it
+   here as well means the intent is visible in the markup even with JS off. */
+form[data-confirm] { display: inline; }
 
-.alert { border-radius: 8px; padding: 11px 15px; margin-bottom: 16px; border: 1px solid; }
-.alert-ok { border-color: #1f8f56; background: #12281c; color: #b8e6cd; }
-.alert-bad { border-color: #8a3030; background: #2a1414; color: #f0c2c2; }
-.alert-warn { border-color: #8a6220; background: #2a2313; color: #f0ddb8; }
-.alert-info { border-color: #2a3346; background: var(--panel); color: var(--muted); }
+/* ---------------------------------------------------------------------------
+   Login
+--------------------------------------------------------------------------- */
 
-.empty { color: var(--muted); padding: 26px 0; text-align: center; }
-
-.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.actions form { display: inline; }
-.actions button { margin: 0; }
-
-/* ---- chat transcript ---- */
-.thread { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
-.msg { border-radius: var(--radius); padding: 10px 14px; max-width: 78%; }
-.msg-admin { background: #16304f; align-self: flex-start; }
-.msg-customer { background: var(--panel-2); align-self: flex-end; }
-.msg .meta { color: var(--muted); font-size: 12px; margin-bottom: 3px; }
-.msg .body { white-space: pre-wrap; word-break: break-word; }
-
-/* ---- login ---- */
 .login-wrap {
   min-height: 100vh;
   display: flex;
@@ -193,11 +575,27 @@ button:hover, .btn:hover { background: var(--accent); text-decoration: none; }
 .login-box .sub { text-align: center; }
 .login-box button { width: 100%; margin-top: 20px; padding: 11px; }
 
+/* ---------------------------------------------------------------------------
+   Narrow screens
+--------------------------------------------------------------------------- */
+
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
   .sidebar { width: auto; flex: none; border-left: 0; border-bottom: 1px solid var(--border); }
-  .main { padding: 18px 16px; }
-  .msg { max-width: 100%; }
+  /* The nav becomes a wrapping row so the page does not open with a screenful
+     of sidebar before any content. */
+  .nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  .nav-group { flex: 1 1 100%; }
+  .nav a { display: inline-block; }
+  .nav-group-label { padding-top: 8px; }
+  .who { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .who form { margin: 0; }
+
+  .main { padding: 18px 16px 40px; }
+  .grid-2 { grid-template-columns: 1fr; }
   table { font-size: 14px; }
   th, td { padding: 8px 6px; }
+  .light { flex-wrap: wrap; }
+  .light-time { margin-inline-start: 0; }
+  .detail-head { flex-direction: column; }
 }

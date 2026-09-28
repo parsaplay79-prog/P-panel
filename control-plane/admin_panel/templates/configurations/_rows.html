@@ -1,0 +1,51 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "نام") }}
+        <th>مشتری</th>
+        <th>نوع</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        {{ m.sort_header(query, base_path, "expires", "انقضا") }}
+        {{ m.sort_header(query, base_path, "created", "ایجاد") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a href="/admin/configurations/{{ item.config.id }}">{{ item.config.display_name }}<span class="muted">_{{ item.config.suffix }}</span></a>
+            <div class="muted sm mono">{{ item.ref }}</div>
+          </td>
+          <td>
+            <a href="/admin/customers/{{ item.customer.id }}">{{ item.customer.display_name or item.customer.telegram_user_id }}</a>
+          </td>
+          <td>
+            {% if item.config.is_test %}<span class="tag tag-warn">تستی</span>
+            {% elif item.config.config_type == 'gaming' %}<span class="tag">گیمینگ</span>
+            {% else %}<span class="tag">عادی</span>{% endif %}
+          </td>
+          <td><span class="tag">{{ CONFIG_STATUS_FA.get(item.config.status, item.config.status) }}</span></td>
+          <td class="mono sm">{{ fmt_dt(item.config.expires_at, with_time=False) }}</td>
+          <td class="mono sm">{{ fmt_dt(item.config.created_at, with_time=False) }}</td>
+          <td class="row-actions">
+            <a class="btn-ghost btn-sm" href="/admin/usage/{{ item.config.id }}">مصرف</a>
+            <a class="btn-ghost btn-sm" href="/admin/configurations/{{ item.config.id }}">مدیریت</a>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("کانفیگی با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/configurations", page, query) }}

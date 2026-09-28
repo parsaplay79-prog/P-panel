@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/configurations">کانفیگ‌ها</a>
+    <a class="active" href="/admin/configurations/{{ config.id }}">{{ config.display_name }}_{{ config.suffix }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <span class="tag tag-lg">{{ CONFIG_STATUS_FA.get(config.status, config.status) }}</span>
+  <div class="detail-actions">
+    {% if config.status == 'ACTIVE' %}
+      <form method="post" action="/admin/configurations/{{ config.id }}/suspend" class="inline">
+        <label class="check inline-check">
+          <input type="checkbox" name="notify" value="1" checked> اطلاع به مشتری
+        </label>
+        <button class="btn-sm" type="submit">معلق کردن</button>
+      </form>
+    {% elif config.status in ('SUSPENDED', 'EXPIRED') %}
+      {{ m.post_form("/admin/configurations/" ~ config.id ~ "/reactivate", "فعال‌سازی", cls="btn-ok") }}
+    {% endif %}
+    {% if customer %}
+      <a class="btn-ghost" href="/admin/customers/{{ customer.id }}">مشتری</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>کانفیگ</h2>
+    <div class="fields">
+      {{ m.field("نام", config.display_name ~ '_' ~ config.suffix) }}
+      {{ m.field("شناسه", '<span class="mono sm">' ~ config.id ~ '</span>' | safe) }}
+      {{ m.field("مشتری", customer.display_name if customer else None) }}
+      {{ m.field("پلن", plan.name if plan else None) }}
+      {{ m.field("ایجاد", fmt_dt(config.created_at)) }}
+      {{ m.field("انقضا", fmt_dt(config.expires_at)) }}
+      {% if config.is_test %}
+        {{ m.field("سقف تستی", format_traffic(config.test_quota_bytes)) }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>مصرف دوره‌ی جاری</h2>
+    {% if quota %}
+      <div class="bar">
+        <div class="bar-fill {% if percent >= 100 %}bar-bad{% elif percent >= 80 %}bar-warn{% endif %}"
+             style="width: {{ [percent, 100] | min }}%"></div>
+      </div>
+      <div class="usage-line">
+        <b>{{ format_traffic(used) }}</b> از {{ format_traffic(quota) }}
+        <span class="muted">({{ percent }}٪)</span>
+      </div>
+      <div class="muted sm">
+        آپلود {{ format_traffic(bytes_up) }} — دانلود {{ format_traffic(bytes_down) }}
+      </div>
+    {% else %}
+      <div class="usage-line"><b>{{ format_traffic(used) }}</b> مصرف — بدون سقف</div>
+      <div class="muted sm">
+        آپلود {{ format_traffic(bytes_up) }} — دانلود {{ format_traffic(bytes_down) }}
+      </div>
+    {% endif %}
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/usage/{{ config.id }}">جزئیات مصرف</a>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>لینک اشتراک</h2>
+  <div class="fields">
+    {{ m.field("لینک", '<code class="link">' ~ subscription_link ~ '</code>' | safe) }}
+  </div>
+  <p class="muted sm">
+    چرخاندن این لینک، اتصال فعلی مشتری را قطع <b>نمی‌کند</b>؛ فقط لینک قدیمی از کار
+    می‌افتد. برای قطع اتصال، کلید پروکسی را بچرخانید.
+  </p>
+  <div class="actions">
+    {{ m.confirm_form("/admin/configurations/" ~ config.id ~ "/rotate-link", "چرخاندن لینک اشتراک",
+                      confirm_text="لینک اشتراک جدید ساخته شود؟ لینک فعلی از کار می‌افتد.") }}
+  </div>
+</div>
+
+<div class="box">
+  <h2>نودها و کلیدها</h2>
+  {% if assignments %}
+    <table>
+      <thead><tr><th>نود</th><th>نقش</th><th>کلید پروکسی</th><th>اتصال</th></tr></thead>
+      <tbody>
+        {% for assignment, node in assignments %}
+          <tr>
+            <td>
+              <a href="/admin/nodes/{{ node.id }}">{{ node.worker_script_name }}</a>
+              {% if node.custom_domain %}<div class="muted sm mono">{{ node.custom_domain }}</div>{% endif %}
+            </td>
+            <td>{{ 'اصلی' if assignment.role == 'primary' else 'پشتیبان' }}</td>
+            <td class="mono sm">{{ assignment.proxy_uuid }}</td>
+            <td>
+              {% if node.state == 'ONLINE' %}<span class="tag tag-ok">آنلاین</span>
+              {% elif node.state == 'DEGRADED' %}<span class="tag tag-warn">افت کیفیت</span>
+              {% else %}<span class="tag tag-bad">{{ node.state }}</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("این کانفیگ به هیچ نودی متصل نیست.",
+                    "کانفیگی که اتصال فعال ندارد کار نمی‌کند؛ اگر وضعیت آن فعال است، این یک ناسازگاری است که باید بررسی شود.") }}
+  {% endif %}
+
+  {% if uris %}
+    <h3>لینک‌های اتصال</h3>
+    {% for uri in uris %}
+      <div class="uri"><code class="link">{{ uri }}</code></div>
+    {% endfor %}
+  {% endif %}
+</div>
+
+{# The lifecycle block. Each action states its consequence in plain words,
+   because "rotate credential" and "rotate link" are indistinguishable to anyone
+   who has not read the domain module — and one of them drops the customer. #}
+<div class="box">
+  <h2>تغییر نام و تمدید</h2>
+  <div class="grid-2">
+    <form method="post" action="/admin/configurations/{{ config.id }}/rename">
+      <label for="display_name">نام نمایشی</label>
+      <input id="display_name" name="display_name" type="text"
+             value="{{ config.display_name }}" required>
+      <div class="actions"><button class="btn-sm" type="submit">تغییر نام</button></div>
+    </form>
+
+    <form method="post" action="/admin/configurations/{{ config.id }}/extend">
+      <label for="days">افزودن روز</label>
+      <input id="days" name="days" type="number" min="1" max="3650" value="30" required>
+      <div class="muted sm">
+        فقط تاریخ انقضا را جلو می‌برد؛ مصرف را صفر نمی‌کند. روی کانفیگ منقضی،
+        وضعیت را هم به فعال برمی‌گرداند و کلید لبه را روشن می‌کند.
+      </div>
+      <div class="actions"><button class="btn-sm" type="submit">تمدید</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="box box-bad">
+  <h2>اقدام‌های خطرناک</h2>
+  <div class="danger-row">
+    <div>
+      <b>چرخاندن کلید پروکسی</b>
+      <div class="muted sm">
+        یک UUID جدید می‌سازد. <b>اتصال فعلی مشتری قطع می‌شود</b> و باید کانفیگ را
+        دوباره وارد کند. وقتی استفاده کنید که کانفیگ لو رفته است.
+      </div>
+    </div>
+    {{ m.confirm_form("/admin/configurations/" ~ config.id ~ "/rotate-credential", "چرخاندن کلید",
+                      confirm_text="کلید پروکسی عوض شود؟ اتصال فعلی مشتری قطع می‌شود و باید کانفیگ را دوباره وارد کند.") }}
+  </div>
+
+  <div class="danger-row">
+    <div>
+      <b>لغو دائمی</b>
+      <div class="muted sm">
+        وضعیت را حذف‌شده می‌کند، کلید لبه را غیرفعال می‌کند، اتصال‌ها را باطل
+        می‌کند و ظرفیت نود را آزاد می‌کند. <b>برگشت‌پذیر نیست</b> — برای توقف
+        موقت از «معلق کردن» استفاده کنید.
+      </div>
+    </div>
+    {% if config.status == 'DELETED' %}
+      <span class="tag tag-bad">قبلاً لغو شده</span>
+    {% else %}
+      {{ m.confirm_form("/admin/configurations/" ~ config.id ~ "/revoke", "لغو دائمی",
+                        confirm_text="این کانفیگ برای همیشه لغو شود؟ این کار برگشت‌پذیر نیست.") }}
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/usage">مصرف</a>
+    <a href="/admin/reconcile">بازبینی</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set type_options = [("paid", "فقط پلن‌های فروشی"), ("test", "فقط تستی‌ها")] %}
+
+{{ m.toolbar("/admin/usage", query,
+              {"type": type_options},
+              "جست‌وجوی نام کانفیگ، پسوند یا مشتری…") }}
+
+  <div id="rows">{% include "usage/_rows.html" %}</div>
+{% endblock %}

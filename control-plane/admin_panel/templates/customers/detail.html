@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/customers">مشتریان</a>
+    <a class="active" href="/admin/customers/{{ customer.id }}">{{ customer.display_name or customer.telegram_user_id }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <span class="tag {{ 'tag-bad' if customer.status == 'banned' else 'tag-ok' }} tag-lg">
+    {{ CUSTOMER_STATUS_FA.get(customer.status, customer.status) }}
+  </span>
+  <div class="detail-actions">
+    {% if customer.status == 'banned' %}
+      {# Unban is deliberately not a confirm-gated destructive action: it only
+         lifts the status. It does NOT restore service — the message below says
+         so, because an admin who unbans and walks away leaves the customer
+         paying for nothing. #}
+      {{ m.post_form("/admin/customers/" ~ customer.id ~ "/unban", "رفع مسدودی", cls="btn-ok") }}
+    {% else %}
+      <button class="btn-bad" type="button" data-toggle="#ban-form">مسدود کردن</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>مشخصات</h2>
+    <div class="fields">
+      {{ m.field("نام", customer.display_name) }}
+      {{ m.field("نام کاربری", '@' ~ customer.telegram_username if customer.telegram_username else None) }}
+      {{ m.field("شناسه‌ی تلگرام", '<span class="mono">' ~ customer.telegram_user_id ~ '</span>' | safe) }}
+      {{ m.field("زبان", customer.language) }}
+      {{ m.field("اولین بازدید", fmt_dt(customer.first_seen_at)) }}
+      {{ m.field("آخرین تعامل", fmt_dt(customer.last_interaction_at)) }}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>ارسال پیام</h2>
+    <p class="muted">
+      برای مکالمه‌ی پشتیبانی از <a href="/admin/tickets">تیکت‌ها</a> استفاده کنید.
+      این کادر برای پیام‌های خارج از تیکت است و هر ارسال با نام شما ثبت می‌شود.
+    </p>
+    <form method="post" action="/admin/customers/{{ customer.id }}/notify">
+      <textarea name="message" rows="3" required
+                placeholder="متن پیام برای مشتری در تلگرام…"></textarea>
+      <div class="actions">
+        <button class="btn-sm" type="submit">ارسال</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if customer.status != 'banned' %}
+<div class="box box-bad" id="ban-form" hidden>
+  <h2>مسدود کردن مشتری</h2>
+  <p class="muted">
+    مسدود کردن، همه‌ی کانفیگ‌های فعال مشتری را هم متوقف می‌کند — مسدودی‌ای که
+    VPN را روشن بگذارد، مسدودی نیست. نتیجه دقیقاً گزارش می‌شود: اگر کانفیگی
+    متوقف نشود، همان‌جا می‌بینید.
+  </p>
+  <form method="post" action="/admin/customers/{{ customer.id }}/ban"
+        data-confirm="این مشتری مسدود شود؟ کانفیگ‌های فعال او هم متوقف می‌شوند.">
+    <label for="reason">دلیل مسدودی</label>
+    <textarea id="reason" name="reason" rows="3"
+              placeholder="دلیل داخلی — برای مشتری فرستاده نمی‌شود."></textarea>
+    <div class="actions">
+      <button class="btn-bad" type="submit">مسدود کردن و توقف سرویس</button>
+      <button class="btn-ghost" type="button" data-toggle="#ban-form">انصراف</button>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="alert alert-warn">
+  <b>رفع مسدودی سرویس را برنمی‌گرداند.</b>
+  این کار فقط وضعیت مشتری را به فعال تغییر می‌دهد. کانفیگ‌های متوقف‌شده را باید
+  از صفحه‌ی هر کانفیگ دستی فعال کنید — تا آن موقع مشتری سرویس نمی‌گیرد.
+</div>
+{% endif %}
+
+<div class="box">
+  <h2>کانفیگ‌ها</h2>
+  {% if configurations %}
+    <table>
+      <thead>
+        <tr><th>نام</th><th>وضعیت</th><th>نوع</th><th>انقضا</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for config in configurations %}
+          <tr>
+            <td><a href="/admin/configurations/{{ config.id }}">{{ config.display_name }}</a></td>
+            <td><span class="tag">{{ CONFIG_STATUS_FA.get(config.status, config.status) }}</span></td>
+            <td>
+              {% if config.is_test %}تستی
+              {% elif config.config_type == 'gaming' %}گیمینگ
+              {% else %}عادی{% endif %}
+            </td>
+            <td class="mono sm">{{ fmt_dt(config.expires_at, with_time=False) }}</td>
+            <td class="row-actions">
+              <a class="btn-ghost btn-sm" href="/admin/usage/{{ config.id }}">مصرف</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("این مشتری هیچ کانفیگی ندارد.") }}
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>سفارش‌ها</h2>
+    {% if orders %}
+      <table>
+        <thead><tr><th>مرجع</th><th>پلن</th><th>وضعیت</th><th>زمان</th></tr></thead>
+        <tbody>
+          {% for order in orders %}
+            <tr>
+              <td><a class="mono" href="/admin/orders/{{ order.id }}">{{ order.id[:8] }}</a></td>
+              <td>{{ plans.get(order.plan_id).name if plans.get(order.plan_id) else '—' }}</td>
+              <td class="muted sm">{{ order.status }}</td>
+              <td class="mono sm">{{ fmt_dt(order.created_at) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("سفارشی ثبت نشده است.") }}
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>تیکت‌ها</h2>
+    {% if tickets %}
+      <table>
+        <thead><tr><th>موضوع</th><th>وضعیت</th><th>آخرین تغییر</th></tr></thead>
+        <tbody>
+          {% for ticket in tickets %}
+            <tr>
+              <td><a href="/admin/tickets/{{ ticket.id[:8] }}">{{ ticket.subject }}</a></td>
+              <td><span class="tag {{ 'tag-ok' if ticket.status == 'closed' else 'tag-warn' }}">{{ ticket.status }}</span></td>
+              <td class="mono sm">{{ fmt_dt(ticket.updated_at) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("تیکتی ثبت نشده است.") }}
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

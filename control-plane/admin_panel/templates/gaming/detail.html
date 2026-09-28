@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/gaming">پروفایل‌های گیمینگ</a>
+    <a class="active" href="/admin/gaming/{{ profile.id }}">{{ profile.name }} v{{ profile.version }}</a>
+    <a href="/admin/gaming/new">انتشار نسخه‌ی جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ profile.name }} <span class="muted">v{{ profile.version }}</span></h1>
+  <div class="detail-actions">
+    {% if profile.is_current %}
+      <span class="tag tag-ok tag-lg">نسخه‌ی فعال</span>
+    {% else %}
+      <span class="tag tag-lg">نسخه‌ی تاریخی</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>وضعیت این نسخه</h2>
+    <div class="fields">
+      {{ m.field("نسخه", "v" ~ profile.version) }}
+      {{ m.field("انتشار", fmt_dt(profile.created_at)) }}
+      {{ m.field("پلن‌های اشاره‌کننده به این نسخه", plans | length) }}
+      {{ m.field("نودهای گیمینگ موجود", gaming_nodes | length) }}
+    </div>
+    {% if not profile.is_current %}
+      <div class="actions">
+        {# Not a rollback: the old row is never made current again. Flipping
+           `is_current` back would erase the record that the intermediate
+           version was ever live — and a health investigation needs that. The
+           settings become version + 1, so the series reads as what actually
+           happened. #}
+        {{ m.confirm_form("/admin/gaming/" ~ profile.id ~ "/restore",
+                          "انتشار این تنظیمات به‌عنوان نسخه‌ی جدید",
+                          confirm_text="این تنظیمات به‌عنوان یک نسخه‌ی جدید منتشر شود؟ نسخه‌ی فعلی تاریخی می‌شود ولی پاک نمی‌شود.") }}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>تنظیمات این نسخه</h2>
+    <pre class="uri mono">{{ settings_text }}</pre>
+  </div>
+</div>
+
+<div class="box">
+  <h2>تاریخ نسخه‌ها</h2>
+  <table>
+    <thead>
+      <tr><th>نسخه</th><th>وضعیت</th><th>انتشار</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for sibling in siblings %}
+        <tr>
+          <td class="mono">
+            {% if sibling.id == profile.id %}
+              v{{ sibling.version }}
+            {% else %}
+              <a href="/admin/gaming/{{ sibling.id }}">v{{ sibling.version }}</a>
+            {% endif %}
+          </td>
+          <td>
+            {% if sibling.is_current %}
+              <span class="tag tag-ok">فعال</span>
+            {% else %}
+              <span class="tag">تاریخی</span>
+            {% endif %}
+          </td>
+          <td class="mono sm">{{ fmt_dt(sibling.created_at) }}</td>
+          <td class="row-actions">
+            {% if sibling.id == profile.id %}<span class="muted sm">همین صفحه</span>
+            {% elif sibling.is_current %}<span class="muted sm">—</span>
+            {% else %}
+              {{ m.post_form("/admin/gaming/" ~ sibling.id ~ "/restore", "بازگرداندن") }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="box">
+  <h2>پلن‌های متصل به این نسخه</h2>
+  {% if plans %}
+    <table>
+      <thead><tr><th>پلن</th><th>وضعیت</th><th></th></tr></thead>
+      <tbody>
+        {% for plan in plans %}
+          <tr>
+            <td><a href="/admin/plans/{{ plan.id }}/edit">{{ plan.name }}</a></td>
+            <td>
+              {% if plan.is_active %}<span class="tag tag-ok">فعال</span>
+              {% else %}<span class="tag">غیرفعال</span>{% endif %}
+            </td>
+            <td class="row-actions">
+              <a class="btn-ghost btn-sm" href="/admin/plans/{{ plan.id }}/edit">تغییر پروفایل</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted sm">
+      پلن‌ها به یک <b>نسخه‌ی مشخص</b> اشاره می‌کنند، نه به «آخرین نسخه». تا وقتی
+      پلنی را به نسخه‌ی تازه تغییر ندهید، انتشار نسخه‌ی جدید روی مشتری‌های آن
+      پلن هیچ اثری ندارد.
+    </div>
+  {% else %}
+    {{ m.empty_state("هیچ پلنی به این نسخه اشاره نمی‌کند.",
+                    "پلن‌های گیمینگ بدون پروفایل، از تنظیمات پیش‌فرض استفاده می‌کنند.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>نودهایی که این تنظیمات را می‌گیرند</h2>
+  {% if gaming_nodes %}
+    <table>
+      <thead><tr><th>نود</th><th>وضعیت</th><th>سلامت</th></tr></thead>
+      <tbody>
+        {% for node in gaming_nodes %}
+          <tr>
+            <td><a href="/admin/nodes/{{ node.id }}">{{ node.worker_script_name }}</a></td>
+            <td class="muted sm">{{ node.state }}</td>
+            <td class="num">{{ node.health_score | int }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted sm">
+      آستانه‌های پایداری این پروفایل فقط روی نودهای دارای تگ
+      <span class="mono">gaming</span> اعمال می‌شود و در بررسی سلامت بعدی (هر ۶۰
+      ثانیه) اثر می‌گذارد.
+    </div>
+  {% else %}
+    {{ m.empty_state("هیچ نودی تگ gaming ندارد.",
+                    "پروفایل منتشر می‌شود ولی تا وقتی نودی این تگ را نداشته باشد، جایی اعمال نمی‌شود.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

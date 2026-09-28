@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/tickets">تیکت‌ها</a>
+    <a class="active" href="/admin/tickets/{{ ref }}">{{ ref }}</a>
+    {% if customer %}<a href="/admin/customers/{{ customer.id }}">پرونده‌ی مشتری</a>{% endif %}
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ ticket.subject }}</h1>
+  <div class="detail-actions">
+    <span class="tag {{ TICKET_STATUS_TAG.get(ticket.status, '') }} tag-lg">
+      {{ TICKET_STATUS_FA.get(ticket.status, ticket.status) }}
+    </span>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>مشتری</h2>
+    {% if customer %}
+      <div class="fields">
+        {{ m.field("نام", customer.display_name) }}
+        {{ m.field("شناسه‌ی تلگرام", customer.telegram_user_id) }}
+        {{ m.field("نام کاربری", "@" ~ customer.telegram_username if customer.telegram_username else None) }}
+        {{ m.field("وضعیت", CUSTOMER_STATUS_FA.get(customer.status, customer.status)) }}
+        {{ m.field("اولین تعامل", fmt_dt(customer.first_seen_at)) }}
+        {{ m.field("آخرین تعامل", fmt_dt(customer.last_interaction_at)) }}
+      </div>
+      <div class="actions">
+        <a class="btn-ghost btn-sm" href="/admin/customers/{{ customer.id }}">پرونده‌ی کامل</a>
+      </div>
+    {% else %}
+      {{ m.empty_state("این تیکت مشتری متصل ندارد.") }}
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>کانفیگ‌های مشتری</h2>
+    {# The customer's live state, right next to the reply box. Answering "why is
+       my config not working" from the bot meant switching to a second surface
+       to look at the config; here it is on the same screen as the thread. #}
+    {% if configs %}
+      <table>
+        <thead><tr><th>نام</th><th>وضعیت</th><th>انقضا</th></tr></thead>
+        <tbody>
+          {% for config in configs %}
+            <tr>
+              <td><a href="/admin/configurations/{{ config.id }}">{{ config.display_name }}_{{ config.suffix }}</a></td>
+              <td>
+                <span class="tag {{ 'tag-ok' if config.status == 'ACTIVE' else ('tag-warn' if config.status == 'SUSPENDED' else 'tag-bad') }}">
+                  {{ CONFIG_STATUS_FA.get(config.status, config.status) }}
+                </span>
+              </td>
+              <td class="mono sm">{{ fmt_dt(config.expires_at, with_time=False) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {{ m.empty_state("این مشتری هیچ کانفیگی ندارد.") }}
+    {% endif %}
+  </div>
+</div>
+
+<div class="box">
+  <h2>گفت‌وگو</h2>
+  {% if messages %}
+    {% for message in messages %}
+      <div class="attempt">
+        <div class="attempt-head">
+          <b>{{ 'پشتیبانی' if message.author_type == 'admin' else 'مشتری' }}</b>
+          <span class="muted sm mono">{{ fmt_dt(message.created_at) }}</span>
+        </div>
+        <div>{{ message.body }}</div>
+      </div>
+    {% endfor %}
+  {% else %}
+    {{ m.empty_state("هنوز پیامی در این تیکت نیست.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>پاسخ</h2>
+  <form method="post" action="/admin/tickets/{{ ref }}/reply">
+    <label for="body">متن پاسخ</label>
+    <textarea id="body" name="body" rows="8" required></textarea>
+    <div class="muted sm">
+      پاسخ با قالب خود ربات برای مشتری در تلگرام ارسال می‌شود — مشتری نمی‌تواند
+      تشخیص دهد از کدام سطح پاسخ گرفته است.
+    </div>
+
+    <label class="inline-check">
+      <input type="checkbox" name="close_after" value="1">
+      <span>پس از ارسال، تیکت بسته شود</span>
+    </label>
+    <div class="muted sm">
+      حالت رایج «این هم پاسخ، و تمام» است؛ یک اقدام به‌جای دو تا، حالتی که پاسخ
+      ارسال شده ولی تیکت باز مانده و کسی آن را نمی‌بندد را حذف می‌کند.
+    </div>
+
+    <div class="actions">
+      <button class="btn-ok" type="submit">ارسال پاسخ</button>
+      {% if ticket.status != 'closed' %}
+        <a class="btn-ghost" href="/admin/tickets/{{ ref }}">بازنویسی</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="box">
+  <h2>بستن تیکت</h2>
+  <p class="muted">
+    اگر مشتری بعد از بستن دوباره پیام بدهد، تیکت خودکار باز می‌شود — پس بستن
+    چیزی را از دست نمی‌دهد.
+  </p>
+  {% if ticket.status == 'closed' %}
+    <span class="tag">از قبل بسته است</span>
+  {% else %}
+    {{ m.confirm_form("/admin/tickets/" ~ ref ~ "/close", "بستن تیکت",
+                      confirm_text="این تیکت بسته شود؟ اگر مشتری دوباره پیام بدهد خودکار باز می‌شود.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

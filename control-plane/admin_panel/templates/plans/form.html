@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/plans">پلن‌ها</a>
+    <a class="active" href="#">{{ 'ویرایش' if plan else 'پلن جدید' }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+<form method="post"
+      action="{{ '/admin/plans/' ~ plan.id ~ '/edit' if plan else '/admin/plans/new' }}"
+      class="form-page">
+
+  <div class="grid-2">
+    <div class="box">
+      <h2>مشخصات</h2>
+
+      <label for="name">نام پلن</label>
+      <input id="name" name="name" type="text" required maxlength="60"
+             value="{{ plan.name if plan else '' }}">
+
+      <label for="description">توضیح</label>
+      <input id="description" name="description" type="text"
+             value="{{ plan.description or '' if plan else '' }}"
+             placeholder="یک خط توضیح که در منوی خرید نمایش داده می‌شود.">
+
+      <label for="price_amount">قیمت</label>
+      <input id="price_amount" name="price_amount" type="text" dir="ltr" required
+             value="{{ plan.price_amount | int if plan else '' }}"
+             placeholder="1600000">
+      <div class="muted sm">جداکننده‌ی هزارگان هم پذیرفته می‌شود (۱٬۶۰۰٬۰۰۰).</div>
+
+      <label for="price_currency">واحد پول</label>
+      <input id="price_currency" name="price_currency" type="text" dir="ltr"
+             value="{{ plan.price_currency if plan else 'IRR' }}">
+
+      <label for="duration_days">مدت (روز)</label>
+      <input id="duration_days" name="duration_days" type="number" min="1" max="3650" required
+             value="{{ plan.duration_days if plan else 30 }}">
+    </div>
+
+    <div class="box">
+      <h2>محدودیت‌ها</h2>
+
+      <label for="quota_gb">حجم (گیگابایت)</label>
+      <input id="quota_gb" name="quota_gb" type="text" dir="ltr"
+             value="{{ (plan.traffic_quota_bytes / GB) | round(2) if plan and plan.traffic_quota_bytes else '' }}">
+      <div class="muted sm">خالی = نامحدود.</div>
+
+      <label for="device_limit">تعداد دستگاه</label>
+      <input id="device_limit" name="device_limit" type="number" min="1" max="100" required
+             value="{{ plan.device_limit if plan else 1 }}">
+
+      <label for="pool_id">استخر</label>
+      <select id="pool_id" name="pool_id" required>
+        <option value="">— انتخاب کنید —</option>
+        {% for pool in pools %}
+          <option value="{{ pool.id }}" {% if plan and plan.pool_id == pool.id %}selected{% endif %}>
+            {{ pool.name }}
+          </option>
+        {% endfor %}
+      </select>
+      {# This is the field that decides which hardware a new customer lands on,
+         so the consequence is stated rather than left to be inferred. #}
+      <div class="muted sm">
+        استخر تعیین می‌کند مشتری جدید روی کدام نودها سوار شود. تغییر آن،
+        مشتری‌های فعلی را جابه‌جا نمی‌کند.
+      </div>
+
+      <label for="gaming_profile_id">پروفایل گیمینگ</label>
+      <select id="gaming_profile_id" name="gaming_profile_id">
+        <option value="">— بدون پروفایل —</option>
+        {% for profile in profiles %}
+          <option value="{{ profile.id }}" {% if plan and plan.gaming_profile_id == profile.id %}selected{% endif %}>
+            {{ profile.name }} (نسخه‌ی {{ profile.version }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  {% if plan %}
+    <div class="alert alert-warn">
+      <b>تغییر مدت، دوره‌ی مصرف مشتری‌های فعلی را جابه‌جا می‌کند.</b>
+      دوره‌ی مصرف از تاریخ فعال‌سازی و «مدت» پلن حساب می‌شود؛ عوض کردن مدت،
+      مرز دوره را برای مشتری‌هایی که وسط دوره هستند تغییر می‌دهد و مصرفشان ممکن
+      است صفر یا دو برابر به نظر برسد. سیستم مهاجرتی انجام نمی‌دهد چون هیچ
+      مهاجرت درستی برای همه وجود ندارد.
+    </div>
+  {% endif %}
+
+  <div class="actions">
+    <button type="submit">{{ 'ذخیره‌ی تغییرات' if plan else 'ساخت پلن' }}</button>
+    <a class="btn-ghost" href="/admin/plans">انصراف</a>
+  </div>
+</form>
+{% endblock %}

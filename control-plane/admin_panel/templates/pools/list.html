@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/pools">استخرها</a>
+    <a href="/admin/nodes">نودها</a>
+    <a href="/admin/plans">پلن‌ها</a>
+    <a class="btn-ok btn-sm" href="/admin/pools/new">استخر جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set strategy_options = [] %}
+{% for value, label in STRATEGY_FA.items() %}
+  {% set _ = strategy_options.append((value, label)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/pools", query,
+              {"strategy": strategy_options},
+              "جست‌وجوی نام استخر…") }}
+
+  <div id="rows">{% include "pools/_rows.html" %}</div>
+{% endblock %}

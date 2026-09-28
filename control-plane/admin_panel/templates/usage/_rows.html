@@ -1,0 +1,62 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "کانفیگ") }}
+        <th>مشتری</th>
+        <th>وضعیت</th>
+        <th class="num">مصرف دوره</th>
+        <th class="num">سهم از سقف</th>
+        <th></th>
+        {{ m.sort_header(query, base_path, "expires", "انقضا") }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a href="/admin/usage/{{ item.config.id }}">
+              {{ item.config.display_name }}_{{ item.config.suffix }}
+            </a>
+            {% if item.config.is_test %}<span class="tag">تستی</span>{% endif %}
+          </td>
+          <td>{{ item.customer.display_name or item.customer.telegram_user_id }}</td>
+          <td class="muted sm">{{ STATUS_FA.get(item.config.status, item.config.status) }}</td>
+          <td class="num">{{ format_traffic(item.used) }}</td>
+          <td class="num">
+            {% if item.quota %}
+              {# The percentage is what this page is opened to answer: "who is
+                 closest to their cap". Shown with the bar so a near-full config
+                 reads as near-full at a glance rather than as a number to compare. #}
+              <div class="usage-line">
+                <span>{{ item.percent }}%</span>
+                <div class="bar">
+                  <div class="bar-fill{% if item.percent >= 90 %} bar-bad{% elif item.percent >= 70 %} bar-warn{% endif %}"
+                       style="width: {{ [item.percent, 100] | min }}%"></div>
+                </div>
+                <span class="muted sm">از {{ format_traffic(item.quota) }}</span>
+              </div>
+            {% else %}
+              <span class="muted sm">نامحدود</span>
+            {% endif %}
+          </td>
+          <td class="row-actions">
+            <a class="btn-ghost btn-sm" href="/admin/usage/{{ item.config.id }}">دفتر مصرف</a>
+          </td>
+          <td class="mono sm">{{ fmt_dt(item.config.expires_at, with_time=False) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("کانفیگی با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/usage", page, query) }}

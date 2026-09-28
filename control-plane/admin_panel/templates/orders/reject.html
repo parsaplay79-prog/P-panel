@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="box box-narrow">
+  <p class="lede">
+    سفارش <span class="mono">{{ ref }}</span>
+    {% if customer %}از {{ customer.display_name or customer.telegram_user_id }}{% endif %}
+    رد می‌شود. این متن عیناً برای مشتری در تلگرام فرستاده می‌شود، پس آن را طوری
+    بنویسید که برای او قابل فهم باشد — «رسید ناخوانا است» به او می‌گوید چه کاری
+    باید بکند، «رد شد» نمی‌گوید.
+  </p>
+
+  <form method="post" action="/admin/orders/{{ order.id }}/reject">
+    <label for="reason">دلیل رد</label>
+    <textarea id="reason" name="reason" rows="4" required autofocus
+              placeholder="مثلاً: مبلغ واریزی با قیمت پلن هم‌خوانی ندارد."></textarea>
+
+    <div class="actions">
+      <button class="btn-bad" type="submit">رد پرداخت</button>
+      <a class="btn-ghost" href="/admin/orders">انصراف</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

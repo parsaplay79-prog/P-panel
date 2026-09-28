@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/nodes">نودها</a>
+    <a href="/admin/health">سلامت</a>
+    <a class="active" href="/admin/health/{{ node.id }}">{{ node.worker_script_name }}</a>
+    <a href="/admin/nodes/{{ node.id }}">مدیریت نود</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ node.worker_script_name }}</h1>
+  <div class="detail-actions">
+    <span class="tag {{ NODE_STATE_TAG.get(node.state, '') }} tag-lg">
+      {{ NODE_STATE_FA.get(node.state, node.state) }}
+    </span>
+  </div>
+</div>
+
+{% if held %}
+  <div class="alert alert-warn">
+    این نود در وضعیت {{ NODE_STATE_FA.get(node.state, node.state) }} است، پس حلقه‌ی
+    سلامت آن را به ONLINE برنمی‌گرداند — نمونه‌ها ثبت می‌شوند ولی وضعیت دست‌نخورده
+    می‌ماند. تا وقتی این وضعیت برقرار است، failover هم رخ نمی‌دهد.
+  </div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="box">
+    <h2>وضعیت فعلی</h2>
+    <div class="fields">
+      {{ m.field("امتیاز سلامت", node.health_score | int) }}
+      {{ m.field("شکست پیاپی", node.consecutive_failures) }}
+      {{ m.field("موفقیت پیاپی", node.consecutive_successes) }}
+      {{ m.field("آفلاین از", fmt_dt(node.offline_since)) }}
+      {{ m.field("کنترل‌پلین", "سالم" if node.control_plane_health else "ناسالم") }}
+      {{ m.field("دیتاپلین", "سالم" if node.data_plane_health else "ناسالم") }}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>آستانه‌های مؤثر بر این نود</h2>
+    <div class="fields">
+      {{ m.field("افت کیفیت پس از", thresholds.degraded_after_failures ~ " شکست پیاپی") }}
+      {{ m.field("آفلاین پس از", thresholds.offline_after_failures ~ " شکست پیاپی") }}
+      {{ m.field("آنلاین پس از", thresholds.online_after_successes ~ " موفقیت پیاپی") }}
+      {{ m.field("failover پس از",
+                 (thresholds.failover_after_offline.total_seconds() // 60) | int ~ " دقیقه آفلاین‌بودن") }}
+    </div>
+    <div class="muted sm">
+      این اعداد از همان تابعی می‌آید که حلقه‌ی سلامت استفاده می‌کند؛ اگر این نود
+      تگ <span class="mono">gaming</span> داشته باشد، مقادیر پروفایل گیمینگ فعال
+      است و در غیر این صورت پیش‌فرض پلتفرم.
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>دوره‌های پیاپی</h2>
+  {% if runs %}
+    <div class="muted sm">
+      نمونه‌ها به دوره‌های هم‌وضعیت فشرده شده‌اند — «۵ شکست پیاپی از ۱۴:۰۲» پاسخ
+      سؤال است، پنج ردیف جداگانه نیست. همین دوره است که از آستانه می‌گذرد.
+    </div>
+    <table>
+      <thead><tr><th>شروع</th><th>پایان</th><th>نتیجه</th><th class="num">تعداد</th><th>عبور از آستانه؟</th></tr></thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td class="mono sm">{{ fmt_dt(run.start) }}</td>
+            <td class="mono sm">{{ fmt_dt(run.end) }}</td>
+            <td>
+              {% if run.success %}<span class="tag tag-ok">موفق</span>
+              {% else %}<span class="tag tag-bad">ناموفق</span>{% endif %}
+            </td>
+            <td class="num">{{ run.count }}</td>
+            <td class="muted sm">
+              {% if run.success %}
+                {% if run.count >= thresholds.online_after_successes %}
+                  <span class="tag tag-ok">بله — به آنلاین برمی‌گردد</span>
+                {% else %}زیر آستانه‌ی {{ thresholds.online_after_successes }}{% endif %}
+              {% else %}
+                {% if run.count >= thresholds.offline_after_failures %}
+                  <span class="tag tag-bad">بله — آفلاین می‌شود</span>
+                {% elif run.count >= thresholds.degraded_after_failures %}
+                  <span class="tag tag-warn">بله — افت کیفیت</span>
+                {% else %}زیر آستانه‌ی {{ thresholds.degraded_after_failures }}{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("هیچ نمونه‌ای ثبت نشده است.",
+                    "تا وقتی نود در چرخه‌ی بررسی باشد، هر ۶۰ ثانیه یک نمونه ثبت می‌شود.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>نمونه‌های خام</h2>
+  {% if samples %}
+    <table>
+      <thead>
+        <tr>
+          <th>زمان</th><th>نوع</th><th>نتیجه</th>
+          <th class="num">تأخیر</th><th class="num">لرزش</th><th class="num">افت بسته</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sample in samples %}
+          <tr>
+            <td class="mono sm">{{ fmt_dt(sample.checked_at) }}</td>
+            <td class="muted sm">{{ sample.check_type }}</td>
+            <td>
+              {% if sample.success %}<span class="tag tag-ok">موفق</span>
+              {% else %}<span class="tag tag-bad">ناموفق</span>{% endif %}
+            </td>
+            <td class="num">{{ sample.latency_ms | int ~ "ms" if sample.latency_ms is not none else "—" }}</td>
+            <td class="num">{{ sample.jitter_ms | int ~ "ms" if sample.jitter_ms is not none else "—" }}</td>
+            <td class="num">{{ sample.packet_loss ~ "%" if sample.packet_loss is not none else "—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted sm">
+      حداکثر ۵۰۰ نمونه‌ی آخر نمایش داده می‌شود. نمونه‌های قدیمی‌تر در پایگاه داده
+      هستند ولی اینجا نیستند — این فهرست تاریخ کامل نیست.
+    </div>
+  {% else %}
+    {{ m.empty_state("نمونه‌ای ثبت نشده است.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

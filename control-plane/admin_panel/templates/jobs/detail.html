@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/jobs">صف کارها</a>
+    <a class="active" href="/admin/jobs/{{ job.id }}">{{ job.id[:8] }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ JOB_TYPE_FA.get(job.job_type, job.job_type) }}</h1>
+  <div class="detail-actions">
+    {% set tag = 'tag-ok' if job.status == 'SUCCEEDED' else ('tag-bad' if job.status == 'FAILED' else ('tag-warn' if job.status == 'RUNNING' else '')) %}
+    <span class="tag {{ tag }} tag-lg">{{ JOB_STATUS_FA.get(job.status, job.status) }}</span>
+  </div>
+</div>
+
+{% if job.status == STATUS_RUNNING %}
+  <div class="alert alert-warn">
+    این کار همین حالا در حال اجراست. لغو آن ممکن نیست: worker داخل handler است و
+    تغییر وضعیت ردیف به «لغو شده» اجرا را متوقف نمی‌کند — فقط صف ادعا می‌کند کاری
+    رخ نداده، در حالی که فراخوانی‌های Cloudflare ادامه دارند.
+  </div>
+{% elif job.status == STATUS_FAILED %}
+  <div class="alert alert-bad">
+    این کار پس از {{ job.attempts }} تلاش ناموفق ماند. اگر علت را رفع کرده‌اید،
+    «تلاش دوباره» بودجه‌ی تلاش را از نو تنظیم می‌کند — نگه‌داشتن شمارش قبلی باعث
+    می‌شد تلاش سوم بی‌صدا از اجرا خودداری کند.
+  </div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="box">
+    <h2>مشخصات</h2>
+    <div class="fields">
+      {{ m.field("شناسه", job.id) }}
+      {{ m.field("نوع", JOB_TYPE_FA.get(job.job_type, job.job_type)) }}
+      {{ m.field("وضعیت", JOB_STATUS_FA.get(job.status, job.status)) }}
+      {{ m.field("تلاش", job.attempts ~ " از " ~ job.max_attempts) }}
+      {{ m.field("درخواست‌کننده", (requester.web_username or requester.telegram_user_id) if requester else "سیستم") }}
+      {{ m.field("ایجاد", fmt_dt(job.created_at)) }}
+      {{ m.field("شروع", fmt_dt(job.started_at)) }}
+      {{ m.field("پایان", fmt_dt(job.finished_at)) }}
+    </div>
+    {% if job.idempotency_key %}
+      <div class="muted sm">
+        کلید یکتا: <span class="mono">{{ job.idempotency_key }}</span>
+        <div>
+          این کلید همان چیزی است که ثبت دوباره‌ی یک کار را بی‌اثر می‌کند — پس
+          «تأیید» و «تلاش دوباره» نمی‌توانند دو فعال‌سازی هم‌زمان بسازند.
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>دست‌کاری</h2>
+    {% if job.status == STATUS_FAILED %}
+      {{ m.post_form("/admin/jobs/" ~ job.id ~ "/retry", "تلاش دوباره", cls="btn-ok") }}
+    {% elif job.status == STATUS_QUEUED %}
+      {{ m.confirm_form("/admin/jobs/" ~ job.id ~ "/cancel", "لغو کار",
+                        confirm_text="این کار از صف لغو شود؟ پس از لغو اجرا نمی‌شود.") }}
+    {% elif job.status == STATUS_RUNNING %}
+      <div class="muted sm">
+        در حال اجرا — نه قابل لغو، نه قابل تلاش دوباره. منتظر بمانید یا بگذارید
+        تمام شود و نتیجه را در صورت نیاز برگردانید.
+      </div>
+    {% else %}
+      <div class="muted sm">
+        این کار تمام شده است. کار تمام‌شده دوباره اجرا نمی‌شود: برای
+        <span class="mono">provision_node</span> یعنی ساختن دوباره‌ی KV و
+        بارگذاری دوباره‌ی اسکریپت برای نودی که از قبل وجود دارد.
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="box">
+  <h2>ورودی کار</h2>
+  <pre class="uri mono">{{ job.payload_json | tojson(indent=2) }}</pre>
+</div>
+
+{% if job.result_json %}
+  <div class="box">
+    <h2>نتیجه</h2>
+    <pre class="uri mono">{{ job.result_json | tojson(indent=2) }}</pre>
+    {# The useful link: a finished provision job carries the new node's id, which
+       is how an operator gets from "the job succeeded" to the node it made. #}
+    {% set produced_node = job.result_json.get('node_id') %}
+    {% set produced_config = job.result_json.get('configuration_id') %}
+    {% if produced_node %}
+      <div class="actions">
+        <a class="btn-ghost btn-sm" href="/admin/nodes/{{ produced_node }}">نود ساخته‌شده</a>
+        <a class="btn-ghost btn-sm" href="/admin/health/{{ produced_node }}">سلامت آن</a>
+      </div>
+    {% endif %}
+    {% if produced_config %}
+      <div class="actions">
+        <a class="btn-ghost btn-sm" href="/admin/configurations/{{ produced_config }}">کانفیگ ساخته‌شده</a>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if job.last_error %}
+  <div class="box box-bad">
+    <h2>آخرین خطا</h2>
+    <pre class="uri mono">{{ job.last_error }}</pre>
+  </div>
+{% endif %}
+
+{% endblock %}

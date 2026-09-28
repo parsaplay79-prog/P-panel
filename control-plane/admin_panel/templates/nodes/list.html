@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/nodes">نودها</a>
+    <a href="/admin/pools">استخرها</a>
+    <a href="/admin/health">سلامت</a>
+    <a class="btn-ok btn-sm" href="/admin/nodes/new">نود جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set state_options = [] %}
+{% for state in states %}
+  {% set _ = state_options.append((state, NODE_STATE_FA.get(state, state))) %}
+{% endfor %}
+{% set pool_options = [] %}
+{% for pool in pools %}
+  {% set _ = pool_options.append((pool.id, pool.name)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/nodes", query,
+              {"state": state_options, "pool": pool_options},
+              "جست‌وجوی نام اسکریپت، دامنه یا حساب…") }}
+
+  <div id="rows">{% include "nodes/_rows.html" %}</div>
+{% endblock %}

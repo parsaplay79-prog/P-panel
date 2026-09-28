@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/gaming">پروفایل‌های گیمینگ</a>
+    <a href="/admin/plans">پلن‌ها</a>
+    <a class="btn-ok btn-sm" href="/admin/gaming/new">انتشار نسخه‌ی جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set current_options = [("1", "فقط نسخه‌ی فعال"), ("0", "فقط نسخه‌های قدیمی")] %}
+
+{{ m.toolbar("/admin/gaming", query,
+              {"current": current_options},
+              "جست‌وجوی نام پروفایل…") }}
+
+<div class="alert alert-info">
+  پروفایل گیمینگ یک بسته‌ی تنظیمات نسخه‌دار است (MTU، DoH، آستانه‌های پایداری، حالت DNS).
+  نسخه‌ها <b>تغییرناپذیر</b> هستند: انتشار، یک ردیف جدید با شماره‌ی بعدی می‌سازد و
+  نسخه‌ی قبلی دست‌نخورده می‌ماند. همین است که بعداً می‌تواند پاسخ بدهد «وقتی نود
+  این مشتری ناپایدار شد، چه تنظیماتی فعال بود».
+</div>
+
+  <div id="rows">{% include "gaming/_rows.html" %}</div>
+{% endblock %}

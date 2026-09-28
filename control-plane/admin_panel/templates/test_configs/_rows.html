@@ -1,0 +1,61 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>کانفیگ</th>
+        <th>مشتری</th>
+        <th>وضعیت</th>
+        {{ m.sort_header(query, base_path, "created", "ساخت") }}
+        {{ m.sort_header(query, base_path, "expires", "انقضا") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a href="/admin/configurations/{{ item.config.id }}">
+              {{ item.config.display_name }}_{{ item.config.suffix }}
+            </a>
+          </td>
+          <td>
+            {{ item.customer.display_name or item.customer.telegram_user_id }}
+            <div class="muted sm mono">{{ item.customer.telegram_user_id }}</div>
+          </td>
+          <td>
+            <span class="tag {{ 'tag-ok' if item.config.status == 'ACTIVE' else ('tag-warn' if item.config.status == 'SUSPENDED' else 'tag-bad') }}">
+              {{ CONFIG_STATUS_FA.get(item.config.status, item.config.status) }}
+            </span>
+          </td>
+          <td class="mono sm">{{ fmt_dt(item.config.created_at) }}</td>
+          <td class="mono sm">{{ fmt_dt(item.config.expires_at) }}</td>
+          <td class="row-actions">
+            {# Revoking goes through the same domain call as every other revoke,
+               so the edge credential is disabled in the same action. A test
+               config revoked in the database but still live at the edge keeps
+               relaying traffic for free — which is exactly the abuse this button
+               exists to stop. #}
+            {% if item.config.status == 'ACTIVE' %}
+              {{ m.confirm_form("/admin/test/revoke/" ~ item.config.id, "لغو فوری",
+                                confirm_text="این کانفیگ تستی همین حالا لغو شود؟ اتصال مشتری قطع می‌شود.",
+                                cls="btn-ghost btn-sm") }}
+            {% else %}
+              <span class="muted sm">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("کانفیگ تستی‌ای با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/test/history", page, query) }}

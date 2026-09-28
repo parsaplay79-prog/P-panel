@@ -554,3 +554,63 @@ class NotificationsLog(Base):
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), nullable=False)
     notification_type: Mapped[str] = mapped_column(Text, nullable=False)
     sent_at: Mapped[datetime] = _created_at()
+
+
+# ---------------------------------------------------------------------------
+# BACKGROUND JOBS (Document 1 §M)
+# ---------------------------------------------------------------------------
+
+
+class Job(Base):
+    """A unit of slow work that must not run inside a web request.
+
+    Provisioning a node takes tens of seconds (KV namespace, two worker uploads,
+    subdomain propagation) and Document 1 §M is explicit that this belongs in a
+    state-machine-driven background job, "not a single long-running request".
+    Before this table the panel did exactly what the document forbids: the
+    "create node" form blocked on `provision_node()` for up to two minutes, and
+    a Railway proxy timeout mid-flight left a KV namespace and a worker script
+    created with no `nodes` row pointing at them.
+
+    `idempotency_key` is the load-bearing column. Document 1 §M requires every
+    provisioning step to be "safe to retry: each writes a row/record keyed by a
+    stable idempotency key … so a Railway restart mid-provisioning resumes
+    rather than double-creates a KV namespace or double-deploys a script." A
+    UNIQUE index on the key is what makes that true at the queue level: enqueue
+    the same work twice and the second call returns the FIRST row instead of
+    creating a second job. A double-submitted form, a retried request, and a
+    consumer that crashed after claiming but before finishing all collapse to
+    one job.
+
+    `status` is the state machine: QUEUED → RUNNING → SUCCEEDED / FAILED /
+    CANCELLED. A RUNNING job whose process died is not lost — `claim_next_job`
+    reclaims rows whose `started_at` is older than a stale threshold, because a
+    job that is stuck in RUNNING forever is indistinguishable from one that
+    never ran, except that it never retries.
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')",
+            name="ck_jobs_status",
+        ),
+        Index("uq_jobs_idempotency_key", "idempotency_key", unique=True),
+        Index("idx_jobs_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = _uuid_pk()
+    job_type: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="QUEUED")
+    # NULL is allowed: a job enqueued without a key is always a new row. Only
+    # the callers that need dedupe pass one.
+    idempotency_key: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[dict | None] = mapped_column(JSONB)
+    requested_by: Mapped[str | None] = mapped_column(ForeignKey("admins.id"))
+    created_at: Mapped[datetime] = _created_at()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

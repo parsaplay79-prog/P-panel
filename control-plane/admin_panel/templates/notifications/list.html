@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/notifications">اطلاع‌رسانی</a>
+    <a href="/admin/tickets">تیکت‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set type_options = [] %}
+{% for value, label in NOTIFICATION_TYPE_FA.items() %}
+  {% set _ = type_options.append((value, label ~ " (" ~ counts.get(value, 0) ~ ")")) %}
+{% endfor %}
+
+{# The table's reason, stated where the log is read: this is the deduplication
+   record for the expiry/quota sweep, not a send log. The sweep runs from two
+   services and every step is check-then-act against this table, so a row means
+   "this customer has already been warned today, do not warn again". #}
+<div class="alert alert-info">
+  این گزارش، دفتر <b>جلوگیری از تکرار</b> برای جاروی انقضا و حجم است — نه دفتر
+  «ارسال شد». جارو از دو سرویس با دو آهنگ اجرا می‌شود و هر گام آن
+  بخوان-سپس-بنویس روی همین جدول است. پس وجود یک ردیف یعنی «امروز هشدار گرفته،
+  دوباره نده»، نه «پیام تحویل شد».
+</div>
+
+<div class="cards">
+  {% for value, label in NOTIFICATION_TYPE_FA.items() %}
+    <a class="card card-link" href="/admin/notifications?type={{ value }}">
+      <div class="num">{{ counts.get(value, 0) }}</div>
+      <div class="lbl">{{ label }}</div>
+    </a>
+  {% endfor %}
+</div>
+
+{{ m.toolbar("/admin/notifications", query,
+              {"type": type_options},
+              "جست‌وجوی شناسه‌ی تلگرام، نام مشتری یا نوع…") }}
+
+  <div id="rows">{% include "notifications/_rows.html" %}</div>
+{% endblock %}

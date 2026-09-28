@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/jobs">صف کارها</a>
+    <a href="/admin/nodes">نودها</a>
+    <a href="/admin/cloudflare">حساب‌های Cloudflare</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set status_options = [("all", "همه")] %}
+{% for value in ALL_JOB_STATUSES %}
+  {% set _ = status_options.append((value, JOB_STATUS_FA.get(value, value))) %}
+{% endfor %}
+{% set type_options = [] %}
+{% for value in ALL_JOB_TYPES %}
+  {% set _ = type_options.append((value, JOB_TYPE_FA.get(value, value))) %}
+{% endfor %}
+
+<div class="cards">
+  {% for status in ALL_JOB_STATUSES %}
+    <a class="card card-link" href="/admin/jobs?status={{ status }}">
+      <div class="num">{{ counts.get(status, 0) }}</div>
+      <div class="lbl">{{ JOB_STATUS_FA.get(status, status) }}</div>
+    </a>
+  {% endfor %}
+</div>
+
+{{ m.toolbar("/admin/jobs", query,
+              {"status": status_options, "type": type_options},
+              "جست‌وجوی شناسه‌ی کار، نوع یا متن خطا…") }}
+
+<div class="muted sm">
+  به‌طور پیش‌فرض فقط کارهای در انتظار، در حال اجرا و ناموفق نمایش داده می‌شوند —
+  کارهای موفق اکثریت را دارند و کم‌اهمیت‌ترین‌اند. با فیلتر وضعیت می‌توانید همه را
+  ببینید.
+</div>
+
+  <div id="rows">{% include "jobs/_rows.html" %}</div>
+{% endblock %}

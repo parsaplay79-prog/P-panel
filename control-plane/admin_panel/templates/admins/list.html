@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/admins">ادمین‌ها</a>
+    <a href="/admin/audit">گزارش رویدادها</a>
+    <a class="btn-ok btn-sm" href="/admin/admins/new">ادمین جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set role_options = [] %}
+{% for role in ALL_ROLES %}
+  {% set _ = role_options.append((role, ROLE_LABELS.get(role, role))) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/admins", query,
+              {"role": role_options},
+              "جست‌وجوی شناسه‌ی تلگرام یا نام کاربری…") }}
+
+  <div id="rows">{% include "admins/_rows.html" %}</div>
+{% endblock %}

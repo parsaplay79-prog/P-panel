@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{# Form values survive a validation error. The routes echo the submitted fields
+   back as query parameters on `err=`, and the fields below prefer them over the
+   stored row. Without this, an operator who fills six fields and mistypes the
+   capacity loses all six and has to retype them — which is the difference
+   between a form that works and one people avoid using. #}
+{% set p = request.query_params %}
+{% set val_name = p.get('name') or (pool.name if pool else '') %}
+{% set val_tags = p.get('capability_tags') or (pool.capability_tags | join(', ') if pool else '') %}
+{% set val_strategy = p.get('selection_strategy') or (pool.selection_strategy if pool else 'round_robin') %}
+{% set val_health = p.get('min_health_score') or (pool.min_health_score | int if pool else 50) %}
+{% set val_cap = p.get('max_customers_per_node') or (pool.max_customers_per_node if pool else 3) %}
+{% set val_backups = p.get('backup_count') or (pool.backup_count if pool else 0) %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/pools">استخرها</a>
+    <a class="active" href="#">{{ "ویرایش استخر" if pool else "استخر جدید" }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+<form method="post"
+      action="{{ '/admin/pools/' ~ pool.id ~ '/edit' if pool else '/admin/pools/new' }}"
+      class="form-page box">
+
+  <label for="name">نام استخر</label>
+  <input id="name" name="name" type="text" required maxlength="60" value="{{ val_name }}">
+  <div class="muted sm">فقط یک برچسب برای اپراتور است؛ در پنل و گزارش‌ها دیده می‌شود.</div>
+
+  <label for="capability_tags">تگ‌های قابلیت</label>
+  <input id="capability_tags" name="capability_tags" type="text" dir="ltr" value="{{ val_tags }}"
+         placeholder="general, doh">
+  <div class="muted sm">
+    خالی بگذارید تا هر نودی پذیرفته شود. اگر پر شود، فقط نودی که <b>همه‌ی</b> این
+    تگ‌ها را داشته باشد عضو این استخر می‌شود.
+  </div>
+
+  <label for="selection_strategy">روش انتخاب نود</label>
+  <select id="selection_strategy" name="selection_strategy">
+    {% for value in strategies %}
+      <option value="{{ value }}" {% if val_strategy == value %}selected{% endif %}>
+        {{ STRATEGY_FA.get(value, value) }}
+      </option>
+    {% endfor %}
+  </select>
+  <div class="muted sm">
+    «گردشی» برای ترافیک عمومی، «کم‌بارترین» وقتی ظرفیت نودها نامتقارن است، و
+    «امتیاز سلامت» برای گیمینگ که کیفیت اتصال مهم‌تر از توازن بار است.
+  </div>
+
+  <label for="min_health_score">کف امتیاز سلامت</label>
+  <input id="min_health_score" name="min_health_score" type="number" min="0" max="100"
+         step="1" value="{{ val_health }}">
+  <div class="muted sm">
+    نودی که امتیازش کمتر از این باشد از این استخر انتخاب نمی‌شود. مقدار ۱۰۰ یعنی
+    فقط نودهای کاملاً سالم؛ مقداری پایین‌تر یعنی تحمل افت کیفیت در ازای ظرفیت بیشتر.
+  </div>
+
+  <label for="max_customers_per_node">سقف مشتری هر نود</label>
+  <input id="max_customers_per_node" name="max_customers_per_node" type="number"
+         min="1" max="1000" value="{{ val_cap }}">
+  <div class="muted sm">
+    سقف واقعی <span class="mono">min(این عدد، سقف خود نود)</span> است.
+    استخر می‌تواند سخت‌گیرتر کند ولی هرگز سقف نود را بالا نمی‌برد — اگر اینجا
+    عددی بزرگ‌تر بگذارید و تغییری نبینید، سقف نود است که محدود می‌کند.
+  </div>
+
+  <label for="backup_count">تعداد نود پشتیبان</label>
+  <input id="backup_count" name="backup_count" type="number" min="0" max="10"
+         value="{{ val_backups }}">
+  <div class="muted sm">
+    چند اتصال پشتیبان برای هر کانفیگ روی نودهای دیگر گرفته شود. صفر یعنی تک‌نود.
+  </div>
+
+  <div class="actions">
+    <button class="btn-ok" type="submit">{{ "ذخیره" if pool else "ساخت استخر" }}</button>
+    <a class="btn-ghost" href="{{ '/admin/pools/' ~ pool.id if pool else '/admin/pools' }}">انصراف</a>
+  </div>
+</form>
+{% endblock %}

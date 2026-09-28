@@ -14,7 +14,7 @@ plane never depends on the bot to run.
 
 Routes:
   /health, /s/{token}, /webhook/{secret}, /internal/nodes/* — the API surface
-  /admin/* — the HTML admin panel (see api/routes/admin_panel.py)
+  /admin/* — the HTML admin panel (see admin_panel/routes/)
 """
 
 import contextlib
@@ -28,7 +28,10 @@ from admin_panel import auth as admin_auth
 from admin_panel.bootstrap_admin import ensure_bootstrap_owner
 from admin_panel.templating import STATIC_DIR, templates
 from db.migrate import run_migrations
-from api.routes import admin_panel as admin_panel_routes
+# The panel is a package of routers, not a single module: each module owns one
+# subject area (orders, nodes, usage, …) so a permission check lives next to the
+# routes it guards. `admin_panel.routes` re-exports the one aggregate `router`.
+from admin_panel import routes as admin_panel_routes
 from api.routes import health as health_routes
 from api.routes import nodes as node_routes
 from api.routes import subscription as subscription_routes

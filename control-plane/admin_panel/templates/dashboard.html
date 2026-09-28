@@ -1,50 +1,155 @@
 {% extends "base.html" %}
-{% block sub %}
-  <p class="sub">نمای کلی سیستم — اعداد از همان کوئری‌هایی می‌آید که ربات نشان می‌دهد.</p>
-{% endblock %}
+{% import "_macros.html" as m %}
 
 {% block content %}
+
+{# The traffic light comes first, above everything. It is the only thing on
+   this page that answers "is the platform serving customers right now", and
+   every number below it is drill-down rather than a second verdict. #}
+<div class="light light-{{ health_light.level }}">
+  <div class="light-dot"></div>
+  <div>
+    <div class="light-label">{{ health_light.label }}</div>
+    <div class="light-detail">{{ health_light.detail }}</div>
+  </div>
+  <div class="light-time mono">{{ fmt_dt(now, with_time=True) }} UTC</div>
+</div>
+
 <div class="cards">
-  <div class="card">
-    <div class="num">{{ n_configs }}</div>
-    <div class="lbl">کانفیگ‌های فعال</div>
-  </div>
-  <div class="card">
-    <div class="num">{{ n_pending }}</div>
+  <a class="card card-link" href="/admin/nodes">
+    <div class="num">{{ n_nodes_online }}</div>
+    <div class="lbl">نود آنلاین <span class="of">از {{ n_nodes_total }}</span></div>
+  </a>
+  <a class="card card-link" href="/admin/orders">
+    <div class="num {% if n_pending_payments %}warn{% endif %}">{{ n_pending_payments }}</div>
     <div class="lbl">پرداخت در انتظار بررسی</div>
-  </div>
-  <div class="card">
-    <div class="num">{{ n_nodes_online }} / {{ n_nodes_total }}</div>
-    <div class="lbl">نودهای آنلاین</div>
-  </div>
-  <div class="card">
-    <div class="num">{{ n_tickets }}</div>
-    <div class="lbl">تیکت‌های باز</div>
-  </div>
-  <div class="card">
+  </a>
+  <a class="card card-link" href="/admin/orders/all?status=PROVISIONING">
+    <div class="num {% if n_orders_provisioning %}warn{% endif %}">{{ n_orders_provisioning }}</div>
+    <div class="lbl">سفارش در حال فعال‌سازی</div>
+  </a>
+  <a class="card card-link" href="/admin/tickets">
+    <div class="num {% if n_tickets_open %}warn{% endif %}">{{ n_tickets_open }}</div>
+    <div class="lbl">تیکت باز</div>
+  </a>
+  <a class="card card-link" href="/admin/configurations">
+    <div class="num">{{ n_configs_active }}</div>
+    <div class="lbl">کانفیگ فعال</div>
+  </a>
+  <a class="card card-link" href="/admin/customers">
     <div class="num">{{ n_customers }}</div>
-    <div class="lbl">مشتریان</div>
+    <div class="lbl">مشتری{% if n_banned %} <span class="of">({{ n_banned }} مسدود)</span>{% endif %}</div>
+  </a>
+</div>
+
+{# Capacity before everything else, because it is the only card that predicts a
+   problem instead of reporting one. Fulfillment starts failing when this hits
+   zero, and at that point the pending-payments card is already too late. #}
+<div class="box capacity-box">
+  <div class="capacity-head">
+    <h2>ظرفیت</h2>
+    <div class="capacity-nums">
+      <b>{{ capacity_used }}</b> از <b>{{ capacity_total }}</b> جایگاه اشغال‌شده
+      {% if capacity_free == 0 %}<span class="tag tag-bad">ظرفیت تمام</span>{% endif %}
+    </div>
+  </div>
+  <div class="bar">
+    <div class="bar-fill {% if capacity_free == 0 %}bar-bad{% elif capacity_free < capacity_total / 4 %}bar-warn{% endif %}"
+         style="width: {{ (100 * capacity_used / capacity_total) | round(1) if capacity_total else 0 }}%"></div>
+  </div>
+  <div class="muted sm">{{ capacity_free }} جایگاه آزاد — فقط نودهای آنلاین و ناسالم شمرده می‌شوند.</div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>وضعیت نودها</h2>
+    <table class="kv">
+      {% for state, count in node_states.items() | sort %}
+        <tr>
+          <th><a href="/admin/nodes?state={{ state }}">{{ NODE_STATE_FA.get(state, state) }}</a></th>
+          <td class="num">{{ count }}</td>
+        </tr>
+      {% else %}
+        <tr><td class="muted">هیچ نودی ثبت نشده است.</td></tr>
+      {% endfor %}
+    </table>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/nodes/new">افزودن نود</a>
+      <a class="btn-ghost btn-sm" href="/admin/health">گزارش سلامت</a>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>صف کارها</h2>
+    <table class="kv">
+      <tr><th><a href="/admin/jobs?status=QUEUED">در انتظار</a></th><td class="num">{{ job_counts.get('QUEUED', 0) }}</td></tr>
+      <tr><th><a href="/admin/jobs?status=RUNNING">در حال اجرا</a></th><td class="num">{{ job_counts.get('RUNNING', 0) }}</td></tr>
+      <tr><th><a href="/admin/jobs?status=FAILED">ناموفق</a></th>
+          <td class="num {% if job_counts.get('FAILED', 0) %}bad{% endif %}">{{ job_counts.get('FAILED', 0) }}</td></tr>
+      <tr><th><a href="/admin/jobs?status=SUCCEEDED">موفق</a></th><td class="num">{{ job_counts.get('SUCCEEDED', 0) }}</td></tr>
+      <tr><th><a href="/admin/jobs?status=CANCELLED">لغوشده</a></th><td class="num">{{ job_counts.get('CANCELLED', 0) }}</td></tr>
+    </table>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/jobs">همه‌ی کارها</a>
+    </div>
   </div>
 </div>
 
-<h2>دسترسی سریع</h2>
-<div class="box">
-  <div class="actions">
-    {% if "payment.review" in perms %}
-      <a class="btn" href="/admin/orders">🧾 بررسی پرداخت‌ها</a>
-    {% endif %}
-    {% if "support.manage" in perms %}
-      <a class="btn" href="/admin/tickets">🆘 تیکت‌های پشتیبانی</a>
-    {% endif %}
-    {% if "node.manage" in perms %}
-      <a class="btn" href="/admin/nodes">🖥 نودها</a>
-    {% endif %}
-    {% if "config.test" in perms %}
-      <a class="btn" href="/admin/test">🧪 کانفیگ تستی</a>
-    {% endif %}
-    {% if "admin.manage" in perms %}
-      <a class="btn" href="/admin/admins">👑 ادمین‌ها</a>
-    {% endif %}
+<div class="grid-2">
+  <div class="box">
+    <h2>کانفیگ‌ها</h2>
+    <table class="kv">
+      <tr><th><a href="/admin/configurations?status=ACTIVE">فعال</a></th><td class="num">{{ n_configs_active }}</td></tr>
+      <tr><th><a href="/admin/configurations?status=SUSPENDED">معلق</a></th><td class="num">{{ n_configs_suspended }}</td></tr>
+      <tr><th><a href="/admin/test/history">تستی</a></th><td class="num">{{ n_configs_test }}</td></tr>
+    </table>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/test">ساخت کانفیگ تستی</a>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>پایش مصرف</h2>
+    <p class="muted">
+      ثبت مصرف یک دفترچه‌ی فقط‌افزودنی است و جدول‌های روزانه صرفاً یک کش از آن.
+      اگر این دو با هم اختلاف داشته باشند، دفترچه درست است — <a href="/admin/reconcile">بازبینی</a>
+      جدول‌ها را از دفترچه درست می‌کند، نه برعکس.
+    </p>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/usage">گزارش مصرف</a>
+      <a class="btn-ghost btn-sm" href="/admin/reconcile">بازبینی</a>
+    </div>
   </div>
 </div>
+
+<div class="box">
+  <h2>آخرین رویدادها</h2>
+  {% if recent_audit %}
+    <table>
+      <thead>
+        <tr><th>زمان</th><th>عامل</th><th>رویداد</th><th>هدف</th></tr>
+      </thead>
+      <tbody>
+        {% for row in recent_audit %}
+          <tr>
+            <td class="mono sm">{{ fmt_dt(row.created_at) }}</td>
+            <td>
+              {% if row.actor_type == 'admin' %}ادمین
+              {% elif row.actor_type == 'system' %}سیستم
+              {% else %}مشتری{% endif %}
+            </td>
+            <td class="mono sm">{{ row.action }}</td>
+            <td class="mono sm muted">{{ row.target_type }}{% if row.target_id %} {{ row.target_id[:8] }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/audit">همه‌ی رویدادها</a>
+    </div>
+  {% else %}
+    {{ m.empty_state('هنوز رویدادی ثبت نشده است.') }}
+  {% endif %}
+</div>
+
 {% endblock %}

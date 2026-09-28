@@ -1,0 +1,72 @@
+{% import "_macros.html" as m %}
+{% if jobs %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>کار</th>
+        {{ m.sort_header(query, base_path, "type", "نوع") }}
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        {{ m.sort_header(query, base_path, "attempts", "تلاش", numeric=true) }}
+        <th>درخواست‌کننده</th>
+        {{ m.sort_header(query, base_path, "created", "ایجاد") }}
+        {{ m.sort_header(query, base_path, "finished", "پایان") }}
+        <th>آخرین خطا</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+        <tr>
+          <td class="mono sm"><a href="/admin/jobs/{{ job.id }}">{{ job.id[:8] }}</a></td>
+          <td>{{ JOB_TYPE_FA.get(job.job_type, job.job_type) }}</td>
+          <td>
+            {% set tag = 'tag-ok' if job.status == 'SUCCEEDED' else ('tag-bad' if job.status == 'FAILED' else ('tag-warn' if job.status == 'RUNNING' else '')) %}
+            <span class="tag {{ tag }}">{{ JOB_STATUS_FA.get(job.status, job.status) }}</span>
+          </td>
+          <td class="num">{{ job.attempts }}<span class="muted">/{{ job.max_attempts }}</span></td>
+          <td class="muted sm">
+            {% set who = requesters.get(job.requested_by) %}
+            {% if who %}{{ who.web_username or who.telegram_user_id }}
+            {% else %}<span class="muted">سیستم</span>{% endif %}
+          </td>
+          <td class="mono sm">{{ fmt_dt(job.created_at) }}</td>
+          <td class="mono sm">{{ fmt_dt(job.finished_at) }}</td>
+          <td class="muted sm">
+            {% if job.last_error %}
+              <span class="bad">{{ job.last_error[:120] }}{% if job.last_error | length > 120 %}…{% endif %}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="row-actions">
+            {# Retry only a FAILED job: retrying a QUEUED one resets a counter
+               nothing has incremented, and retrying a SUCCEEDED one re-runs work
+               that already happened — for provisioning, a second KV namespace and
+               a second worker upload for a node that already exists. #}
+            {% if job.status == 'FAILED' %}
+              {{ m.post_form("/admin/jobs/" ~ job.id ~ "/retry", "تلاش دوباره") }}
+            {% endif %}
+            {% if job.status == 'QUEUED' %}
+              {{ m.confirm_form("/admin/jobs/" ~ job.id ~ "/cancel", "لغو",
+                                confirm_text="این کار از صف لغو شود؟") }}
+            {% endif %}
+            {% if job.status == 'RUNNING' %}
+              <span class="muted sm" title="کار در حال اجرا قابل لغو نیست — worker داخل handler است.">
+                در حال اجرا
+              </span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("کاری با این شرایط در صف نیست.",
+                  "صف خالی یعنی هیچ کاری در انتظار اجرا یا اصلاح نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/jobs", page, query) }}

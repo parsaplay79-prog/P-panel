@@ -1,0 +1,175 @@
+{# Shared building blocks. Imported, not extended: every list page needs the
+   same toolbar, the same sortable header, the same pager, and duplicating that
+   markup per table is how tables drift apart visually. #}
+
+{# ---------------------------------------------------------------------------
+   Toolbar: live search + filters above a table.
+
+   The whole thing is one GET form, so search works with JavaScript off: press
+   the button (or Enter) and the page reloads filtered. The hx-* attributes are
+   the enhancement, and they are all declared here on the form rather than
+   duplicated onto each input:
+
+     * `input changed delay:350ms from:[data-search]` — typing filters as you
+       go. `changed` means the request only fires when the value actually
+       differs from the last request, so backspacing and retyping the same
+       string does not refetch. The 350ms delay is what makes this one request
+       per pause instead of one per keystroke.
+     * `change from:[data-filter]` — picking a status refilters immediately;
+       there is no reason to make an operator press "apply" for a dropdown.
+     * `submit` — the button and Enter, which is also the no-JS path.
+
+   `hx-replace-url` rather than `hx-push-url`: a live search would otherwise
+   push a history entry per paused keystroke, and the browser's back button
+   would step through the operator's typing instead of leaving the page. The
+   URL still reflects the search, so reloading and bookmarking keep it.
+
+   The partial swaps `#rows` only, so the search box keeps focus and its caret
+   position while results update underneath.
+--------------------------------------------------------------------------- #}
+{% macro toolbar(base_path, query, filters={}, placeholder="جست‌وجو…", result_id="rows") %}
+<form class="toolbar" method="get" action="{{ base_path }}" data-list-form
+      hx-get="{{ base_path }}" hx-target="#{{ result_id }}" hx-swap="innerHTML"
+      hx-replace-url="true" hx-indicator="#list-loading"
+      hx-trigger="submit, input changed delay:350ms from:[data-search], change from:[data-filter]">
+  <input type="search" name="q" value="{{ query.q }}" placeholder="{{ placeholder }}"
+         autocomplete="off" data-search aria-label="جست‌وجو">
+
+  {# Every registered filter is submitted, so changing one filter does not drop
+     the others — the classic bug where picking a status clears the search. #}
+  {% for key, options in filters.items() %}
+    <select name="{{ key }}" data-filter aria-label="{{ key }}">
+      <option value="">همه</option>
+      {% for value, label in options %}
+        <option value="{{ value }}" {% if query.filters.get(key) == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  {% endfor %}
+
+  {# Sort state rides along on the form so a filter change does not silently
+     reset the ordering the operator chose. #}
+  {% if query.sort %}<input type="hidden" name="sort" value="{{ query.sort }}">{% endif %}
+  {% if query.direction %}<input type="hidden" name="dir" value="{{ query.direction }}">{% endif %}
+
+  <button class="btn-sm" type="submit">اعمال</button>
+  {% if query.q or query.filters %}
+    <a class="btn-ghost btn-sm" href="{{ base_path }}">پاک کردن</a>
+  {% endif %}
+  <span class="toolbar-loading" id="list-loading">در حال جست‌وجو…</span>
+</form>
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   A sortable column header. A real <a> with a real href, so the ordering is a
+   URL the operator can bookmark, copy to a colleague, and reach by back-button
+   — and so sorting still works with JavaScript off. The hx-* attributes are
+   the enhancement: with HTMX the rows swap in place instead of the whole page
+   reloading, which keeps scroll position when an operator sorts a long table.
+--------------------------------------------------------------------------- #}
+{% macro sort_header(query, base_path, column, label, numeric=false, result_id="rows") %}
+<th class="{% if numeric %}num{% endif %}">
+  <a class="sort" href="{{ query.toggle_sort(base_path, column) }}"
+     hx-get="{{ query.toggle_sort(base_path, column) }}"
+     hx-target="#{{ result_id }}" hx-swap="innerHTML" hx-replace-url="true">
+    {{ label }}<span class="sort-ind">{{ query.sort_indicator(column) }}</span>
+  </a>
+</th>
+{% endmacro %}
+
+
+{# ---------------------------------------------------------------------------
+   Pager. Shows the range ("۱–۵۰ از ۳۱۲") as well as the numbers, because a page
+   that silently clamps ?page=999 to the last page is confusing without it.
+
+   Like the sort header, these are real links with real hrefs — paging works
+   without JS — with hx-* attributes layering an in-place swap on top. The pager
+   is rendered *inside* the rows partial (see the list templates) so an HTMX
+   search swaps the count and the page numbers along with the rows; a pager
+   outside the swap target would keep advertising the previous result's range.
+--------------------------------------------------------------------------- #}
+{% macro pager(base_path, page, query, result_id="rows") %}
+{% if page.total %}
+<div class="pager">
+  <div class="pager-range">
+    نمایش {{ page.first_index }}–{{ page.last_index }} از {{ page.total }}
+  </div>
+  <div class="pager-nav">
+    {% if page.has_prev %}
+      {% set prev_url = query.page_url(base_path, page.number - 1) %}
+      <a class="btn-ghost btn-sm" href="{{ prev_url }}"
+         hx-get="{{ prev_url }}" hx-target="#{{ result_id }}" hx-swap="innerHTML" hx-replace-url="true">قبلی</a>
+    {% else %}
+      <span class="btn-ghost btn-sm disabled">قبلی</span>
+    {% endif %}
+
+    {% for number in page.window() %}
+      {% if number == page.number %}
+        <span class="btn-sm current">{{ number }}</span>
+      {% else %}
+        {% set num_url = query.page_url(base_path, number) %}
+        <a class="btn-ghost btn-sm" href="{{ num_url }}"
+           hx-get="{{ num_url }}" hx-target="#{{ result_id }}" hx-swap="innerHTML" hx-replace-url="true">{{ number }}</a>
+      {% endif %}
+    {% endfor %}
+
+    {% if page.has_next %}
+      {% set next_url = query.page_url(base_path, page.number + 1) %}
+      <a class="btn-ghost btn-sm" href="{{ next_url }}"
+         hx-get="{{ next_url }}" hx-target="#{{ result_id }}" hx-swap="innerHTML" hx-replace-url="true">بعدی</a>
+    {% else %}
+      <span class="btn-ghost btn-sm disabled">بعدی</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+
+{# A confirm-gated submit button.
+
+   Destructive actions (ban, revoke, decommission, refund, delete) go through
+   this so a single misclick cannot undo something irreversible. The form is a
+   normal POST — the confirmation is an enhancement, and without JS the action
+   still works rather than silently doing nothing. #}
+{% macro confirm_form(action, label, params={}, confirm_text="", cls="btn-sm", confirm_cls="btn-bad") %}
+<form method="post" action="{{ action }}" class="inline"
+      {% if confirm_text %}data-confirm="{{ confirm_text }}"{% endif %}>
+  {% for key, value in params.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+  <button class="{{ confirm_cls }} {{ cls }}" type="submit">{{ label }}</button>
+</form>
+{% endmacro %}
+
+
+{# Plain POST with no confirmation — reversible actions (enable, retry,
+   reactivate, verify). Kept separate from confirm_form so a reviewer can tell
+   at a glance which buttons in a template are guarded. #}
+{% macro post_form(action, label, params={}, cls="btn-sm") %}
+<form method="post" action="{{ action }}" class="inline">
+  {% for key, value in params.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+  <button class="{{ cls }}" type="submit">{{ label }}</button>
+</form>
+{% endmacro %}
+
+
+{# Definition row for detail pages. #}
+{% macro field(label, value, mono=false) %}
+<div class="field">
+  <div class="field-label">{{ label }}</div>
+  <div class="field-value{% if mono %} mono{% endif %}">{{ value if value is not none and value != '' else '—' }}</div>
+</div>
+{% endmacro %}
+
+
+{# The empty state. Every table has one, and it says what to do next rather
+   than just "no rows" — an empty queue is good news and should read like it. #}
+{% macro empty_state(message, hint="") %}
+<div class="empty">
+  <div class="empty-text">{{ message }}</div>
+  {% if hint %}<div class="empty-hint">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}

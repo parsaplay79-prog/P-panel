@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block content %}
+<p class="lede">
+  پیش‌فرض این فهرست فقط پرداخت‌های <b>تأییدشده</b> و <b>بازپرداخت‌شده</b> را نشان
+  می‌دهد — یعنی چیزهایی که هنوز قابل بازپرداخت‌اند یا تازه بازپرداخت شده‌اند.
+  برای دیدن همه‌ی وضعیت‌ها از فیلتر استفاده کنید.
+</p>
+
+{% set status_options = [] %}
+{% for state in statuses %}
+  {% set _ = status_options.append((state, PAYMENT_STATUS_FA.get(state, state))) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/payments", query, {"status": status_options},
+              "جست‌وجوی مرجع سفارش، نام مشتری یا کد پیگیری…") }}
+
+  <div id="rows">{% include "payments/_rows.html" %}</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/orders">در انتظار بررسی</a>
+    <a class="active" href="/admin/orders/all">همه‌ی سفارش‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{# Filter options are built from the route's own `statuses` + `ORDER_STATUS_FA`
+   rather than hard-coded here, so a new order status appears in the dropdown
+   the moment the route learns about it. #}
+{% set status_options = [] %}
+{% for state in statuses %}
+  {% set _ = status_options.append((state, ORDER_STATUS_FA.get(state, state))) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/orders/all", query, {"status": status_options},
+              "جست‌وجوی مرجع، نام مشتری یا پلن…") }}
+
+  <div id="rows">{% include "orders/_all_rows.html" %}</div>
+{% endblock %}

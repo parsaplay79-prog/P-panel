@@ -1,0 +1,55 @@
+{# Rows only — this file is also what the route returns for an HTMX request.
+   The approve button posts a form, so it works with or without JavaScript. #}
+{% import "_macros.html" as m %}
+{% if items %}
+<table>
+  <thead>
+    <tr>
+      <th>مرجع</th>
+      <th>مشتری</th>
+      <th>پلن</th>
+      <th>مبلغ</th>
+      <th>روش</th>
+      <th>رسید</th>
+      <th>ارسال</th>
+      <th>تصمیم</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+      <tr>
+        <td><a class="mono" href="/admin/orders/{{ item.order.id }}">{{ item.ref }}</a></td>
+        <td>
+          <a href="/admin/customers/{{ item.customer.id }}">{{ item.customer.display_name or item.customer.telegram_user_id }}</a>
+          <div class="muted sm mono">{{ item.customer.telegram_user_id }}</div>
+        </td>
+        <td>{{ item.plan.name }}</td>
+        <td class="num">{{ format_price(item.attempt.amount, item.attempt.currency) }}</td>
+        <td>
+          {% if item.attempt.method == 'manual_proof' %}دستی
+          {% elif item.attempt.method == 'stars' %}ستارز
+          {% else %}درگاه{% endif %}
+        </td>
+        <td>
+          {% if item.proof_count %}
+            <span class="tag tag-warn">{{ item.proof_count }} فایل</span>
+          {% else %}
+            <span class="tag tag-bad">بدون رسید</span>
+          {% endif %}
+        </td>
+        <td class="mono sm">{{ fmt_dt(item.attempt.created_at) }}</td>
+        <td class="row-actions">
+          {# Approve is not behind a confirmation: it is the queue's main action
+             and a confirm dialog on the thing you do twenty times a day is how
+             operators learn to click through dialogs without reading them. #}
+          {{ m.post_form("/admin/orders/" ~ item.order.id ~ "/approve", "تأیید", cls="btn-ok btn-sm") }}
+          <a class="btn-bad btn-sm" href="/admin/orders/{{ item.order.id }}/reject">رد</a>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  {{ m.empty_state("صف خالی است — هیچ پرداختی منتظر بررسی نیست.",
+                  "اگر مشتری پرداخت کرده اما اینجا نیست، سفارش او را در همه‌ی سفارش‌ها با جست‌وجوی نامش پیدا کنید.") }}
+{% endif %}

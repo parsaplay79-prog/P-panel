@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/orders">در انتظار بررسی</a>
+    <a href="/admin/orders/all">همه‌ی سفارش‌ها</a>
+    <a class="active" href="/admin/orders/{{ order.id }}">{{ order.id[:8] }}</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# Status first, then the actions that status actually allows. The buttons are
+   not decoration: retry exists because a PROVISIONING order is recoverable,
+   cancel is only rendered where the route would accept it, and a paid order
+   offers a refund link instead — because cancelling paid work would lose the
+   record that we owe the customer something. #}
+<div class="detail-head">
+  <span class="tag {{ ORDER_STATUS_TAG.get(order.status, '') }} tag-lg">
+    {{ ORDER_STATUS_FA.get(order.status, order.status) }}
+  </span>
+  <div class="detail-actions">
+    {% if order.status == 'PROVISIONING' %}
+      {{ m.post_form("/admin/orders/" ~ order.id ~ "/retry", "تکمیل فعال‌سازی", cls="btn-ok") }}
+      {{ m.post_form("/admin/orders/" ~ order.id ~ "/queue-job", "سپردن به صف کارها") }}
+    {% endif %}
+    {% if order.status in ('CREATED', 'AWAITING_PAYMENT') %}
+      <a class="btn-ghost" href="/admin/orders/all">ویرایش</a>
+      {{ m.confirm_form("/admin/orders/" ~ order.id ~ "/cancel", "لغو سفارش",
+                        confirm_text="این سفارش لغو شود؟") }}
+    {% endif %}
+    {% if order.status == 'PAID' %}
+      <a class="btn-ok" href="/admin/orders">برو به صف بررسی</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>سفارش</h2>
+    <div class="fields">
+      {{ m.field("مرجع", '<span class="mono">' ~ order.id ~ '</span>' | safe) }}
+      {{ m.field("پلن", plan.name if plan else None) }}
+      {{ m.field("نام درخواستی", order.requested_display_name) }}
+      {{ m.field("ایجاد", fmt_dt(order.created_at)) }}
+      {{ m.field("آخرین تغییر", fmt_dt(order.updated_at)) }}
+      {{ m.field("کلید یکتا", '<span class="mono sm">' ~ order.idempotency_key ~ '</span>' | safe) }}
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>مشتری</h2>
+    <div class="fields">
+      {{ m.field("نام", customer.display_name if customer else None) }}
+      {{ m.field("شناسه‌ی تلگرام", '<span class="mono">' ~ (customer.telegram_user_id if customer else '—') ~ '</span>' | safe) }}
+      {% if customer %}
+        <div class="actions">
+          <a class="btn-ghost btn-sm" href="/admin/customers/{{ customer.id }}">پروفایل مشتری</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>پرداخت‌ها</h2>
+  {% if attempts %}
+    {% for attempt in attempts %}
+      <div class="attempt">
+        <div class="attempt-head">
+          <span class="tag {{ 'tag-ok' if attempt.status == 'APPROVED' else ('tag-bad' if attempt.status == 'REJECTED' else 'tag-warn') }}">{{ attempt.status }}</span>
+          <b>{{ format_price(attempt.amount, attempt.currency) }}</b>
+          <span class="muted sm mono">{{ fmt_dt(attempt.created_at) }}</span>
+          {% if attempt.reviewed_at %}<span class="muted sm">بررسی: {{ fmt_dt(attempt.reviewed_at) }}</span>{% endif %}
+        </div>
+        {% if attempt.rejection_reason %}
+          <div class="muted sm">دلیل رد: {{ attempt.rejection_reason }}</div>
+        {% endif %}
+        {% if proofs.get(attempt.id) %}
+          <div class="proofs">
+            {% for proof in proofs[attempt.id] %}
+              <div class="proof">
+                <span>{{ proof.mime_type or 'رسید' }}</span>
+                {% if proof.size_bytes %}<span class="muted sm">{{ format_traffic(proof.size_bytes) }}</span>{% endif %}
+                <span class="mono sm muted">{{ proof.object_storage_key or proof.telegram_file_id[:24] }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+        <div class="actions">
+          {% if attempt.status == 'WAITING_REVIEW' %}
+            {{ m.post_form("/admin/orders/" ~ order.id ~ "/approve", "تأیید", cls="btn-ok btn-sm") }}
+            <a class="btn-bad btn-sm" href="/admin/orders/{{ order.id }}/reject">رد</a>
+          {% elif attempt.status == 'APPROVED' %}
+            <a class="btn-ghost btn-sm" href="/admin/payments/{{ attempt.id }}">بازپرداخت</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    {{ m.empty_state("هنوز پرداختی ثبت نشده است.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>اشتراک</h2>
+  {% if activation and config %}
+    <div class="fields">
+      {{ m.field("کانفیگ", '<a class="mono" href="/admin/configurations/' ~ config.id ~ '">' ~ config.display_name ~ '</a>' | safe) }}
+      {{ m.field("وضعیت", config.status) }}
+      {{ m.field("انقضا", fmt_dt(config.expires_at)) }}
+      {{ m.field("فعال‌سازی", fmt_dt(activation.activated_at)) }}
+      {% if config_url %}
+        {{ m.field("لینک اشتراک", '<code class="link">' ~ config_url ~ '</code>' | safe) }}
+      {% endif %}
+    </div>
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/configurations/{{ config.id }}">مدیریت کانفیگ</a>
+      {{ m.post_form("/admin/orders/" ~ order.id ~ "/retry", "همگام‌سازی مجدد با نود", cls="btn-sm") }}
+    </div>
+  {% else %}
+    {{ m.empty_state("هنوز اشتراکی ساخته نشده است.",
+                    "اگر پرداخت تأیید شده ولی اشتراک ندارد، دکمه‌ی تکمیل فعال‌سازی را بزنید — کار دوباره از همان نود ادامه پیدا می‌کند و کانفیگ دومی ساخته نمی‌شود.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

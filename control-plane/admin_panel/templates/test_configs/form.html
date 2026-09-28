@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% set val_tid = request.query_params.get('tid') or telegram_user_id %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/test">کانفیگ تستی</a>
+    <a href="/admin/test/history">تاریخچه‌ی تستی‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# The limits ARE the feature: this is the one admin action that hands a
+   stranger 100MB of free relay. Showing them before the button is pressed is
+   the point of the page — "this customer has used 2 of 2" answers most of the
+   requests it receives, and being refused is a worse way to find out. #}
+<div class="alert alert-info">
+  سقف هر حساب تلگرام: <b>{{ TEST_MAX_LIFETIME }} کانفیگ تستی در کل عمر</b>
+  (نه «یکی فعال» — با قاعده‌ی «یکی فعال» کافی است ۲۴ ساعت صبر شود).
+  حجم: <b>{{ format_traffic(TEST_QUOTA_BYTES) }}</b>، مدت: <b>{{ TEST_HOURS }} ساعت</b>.
+</div>
+
+<form method="get" action="/admin/test" class="toolbar">
+  <input type="search" name="telegram_user_id" value="{{ val_tid }}"
+         inputmode="numeric" dir="ltr" placeholder="شناسه‌ی تلگرام مشتری"
+         aria-label="شناسه‌ی تلگرام">
+  <button class="btn-sm" type="submit">بررسی سابقه</button>
+</form>
+
+{% if customer %}
+  <div class="box">
+    <h2>وضعیت این مشتری</h2>
+    <div class="fields">
+      {{ m.field("نام", customer.display_name) }}
+      {{ m.field("شناسه‌ی تلگرام", customer.telegram_user_id) }}
+      {{ m.field("کانفیگ تستی استفاده‌شده", lifetime ~ " از " ~ TEST_MAX_LIFETIME) }}
+      {{ m.field("کانفیگ تستی فعال", "دارد" if active else "ندارد") }}
+    </div>
+    {% if active %}
+      <div class="alert alert-warn">
+        این مشتری یک کانفیگ تستی فعال دارد. صدور کانفیگ جدید تا پایان آن رد
+        می‌شود — دلیلش این است که «یکی فعال» با صبر کردن دور زده می‌شود.
+      </div>
+    {% elif lifetime >= TEST_MAX_LIFETIME %}
+      <div class="alert alert-bad">
+        سقف عمری این مشتری پر شده است ({{ lifetime }} از {{ TEST_MAX_LIFETIME }}).
+        صدور کانفیگ تستی جدید رد می‌شود.
+      </div>
+    {% endif %}
+    <div class="actions">
+      <a class="btn-ghost btn-sm" href="/admin/customers/{{ customer.id }}">پرونده‌ی مشتری</a>
+    </div>
+  </div>
+{% elif val_tid %}
+  <div class="alert alert-warn">
+    مشتری‌ای با این شناسه پیدا نشد. با صدور کانفیگ تستی، پرونده‌ی مشتری ساخته
+    می‌شود.
+  </div>
+{% endif %}
+
+<form method="post" action="/admin/test" class="form-page box">
+  <label for="telegram_user_id">شناسه‌ی تلگرام</label>
+  <input id="telegram_user_id" name="telegram_user_id" type="text" required
+         inputmode="numeric" pattern="[0-9]+" dir="ltr" value="{{ val_tid }}">
+  <div class="muted sm">اگر مشتری وجود نداشته باشد، ساخته می‌شود.</div>
+
+  <label for="node_id">نود</label>
+  {% if nodes %}
+    <select id="node_id" name="node_id">
+      <option value="">— انتخاب خودکار از استخرها —</option>
+      {% for node in nodes %}
+        <option value="{{ node.id }}">
+          {{ node.worker_script_name }} ({{ node.health_score | int }})
+        </option>
+      {% endfor %}
+    </select>
+    <div class="muted sm">
+      وقتی دلیل تست این است که «آیا این نود برای شما کار می‌کند؟»، خود نود
+      متغیرِ آزمایش است — انتخاب تصادفی پاسخ را بی‌معنا می‌کند. اگر فرقی
+      نمی‌کند، خالی بگذارید تا از استخرها انتخاب شود.
+    </div>
+  {% else %}
+    <div class="alert alert-bad">
+      هیچ نود واجد شرایطی وجود ندارد، پس کانفیگ تستی ساخته نمی‌شود.
+      <a href="/admin/nodes">وضعیت نودها</a> را بررسی کنید.
+    </div>
+  {% endif %}
+
+  <div class="actions">
+    <button class="btn-ok" type="submit" {% if not nodes %}disabled{% endif %}>
+      صدور کانفیگ تستی و ارسال برای مشتری
+    </button>
+    <a class="btn-ghost" href="/admin/test/history">تاریخچه</a>
+  </div>
+</form>
+{% endblock %}

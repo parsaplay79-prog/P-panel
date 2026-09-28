@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/audit">گزارش رویدادها</a>
+    <a href="/admin/admins">ادمین‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{# The filter list comes from the rows that exist, not from a hard-coded
+   constant: a hard-coded action list drifts the moment someone adds an audit
+   call, and the drift is silent — the new action simply never appears in the
+   filter, so nobody knows it can be searched for. #}
+{% set action_options = [] %}
+{% for action, count in actions %}
+  {% set _ = action_options.append((action, action ~ " (" ~ count ~ ")")) %}
+{% endfor %}
+{% set actor_options = [("admin", "ادمین"), ("customer", "مشتری"), ("system", "سیستم")] %}
+
+{{ m.toolbar("/admin/audit", query,
+              {"action": action_options, "actor_type": actor_options},
+              "جست‌وجوی اقدام، نوع هدف، شناسه یا متن جزئیات…") }}
+
+<div class="muted sm">
+  هر اقدام تغییردهنده‌ی وضعیت در محصول یک ردیف اینجا ثبت می‌کند. هدف این صفحه
+  پاسخ به «چه کسی این کار را کرد و چه زمانی» در میانه‌ی یک حادثه است — و حادثه
+  زمان نوشتن کوئری نیست.
+</div>
+
+  <div id="rows">{% include "audit/_rows.html" %}</div>
+{% endblock %}

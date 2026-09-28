@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/usage">مصرف</a>
+    <a class="active" href="/admin/usage/{{ config.id }}">{{ config.display_name }}_{{ config.suffix }}</a>
+    <a href="/admin/configurations/{{ config.id }}">کانفیگ</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+<div class="detail-head">
+  <h1>{{ config.display_name }}_{{ config.suffix }}</h1>
+  <div class="detail-actions">
+    {% if customer %}
+      <a class="btn-ghost btn-sm" href="/admin/customers/{{ customer.id }}">
+        {{ customer.display_name or customer.telegram_user_id }}
+      </a>
+    {% endif %}
+    <a class="btn-ghost btn-sm" href="/admin/configurations/{{ config.id }}">مدیریت کانفیگ</a>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="box">
+    <h2>دوره‌ی جاری</h2>
+    <div class="fields">
+      {{ m.field("مصرف", format_traffic(used)) }}
+      {{ m.field("ارسال", format_traffic(bytes_up)) }}
+      {{ m.field("دریافت", format_traffic(bytes_down)) }}
+      {{ m.field("سقف", format_traffic(quota) if quota else "نامحدود") }}
+    </div>
+    {% if quota %}
+      <div class="usage-line">
+        <span>{{ percent }}%</span>
+        <div class="bar">
+          <div class="bar-fill{% if percent >= 90 %} bar-bad{% elif percent >= 70 %} bar-warn{% endif %}"
+               style="width: {{ [percent, 100] | min }}%"></div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="box">
+    <h2>اختلاف دفتر و خلاصه</h2>
+    {% if drift %}
+      <div class="alert alert-bad">
+        {{ drift | length }} روز بین دفتر (حقیقت) و خلاصه‌ی روزانه اختلاف دارد.
+        خلاصه یک کش است؛ اصلاح، خلاصه را <b>از روی دفتر</b> بازمی‌سازد، نه برعکس.
+      </div>
+      <table>
+        <thead><tr><th>روز</th><th class="num">خلاصه</th><th class="num">دفتر</th></tr></thead>
+        <tbody>
+          {% for row in drift %}
+            <tr>
+              <td class="mono sm">{{ row.date }}</td>
+              <td class="num">{{ format_traffic(row.aggregate[0] + row.aggregate[1]) }}</td>
+              <td class="num">{{ format_traffic(row.ledger[0] + row.ledger[1]) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="actions">
+        <a class="btn-ghost btn-sm" href="/admin/reconcile">بازبینی و اصلاح</a>
+      </div>
+    {% else %}
+      <div class="alert alert-ok">دفتر و خلاصه‌ی روزانه هم‌خوان هستند.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="box">
+  <h2>خلاصه‌ی روزانه</h2>
+  {% if aggregates %}
+    <table>
+      <thead><tr><th>روز</th><th class="num">ارسال</th><th class="num">دریافت</th><th class="num">جمع</th></tr></thead>
+      <tbody>
+        {% for agg in aggregates %}
+          <tr>
+            <td class="mono sm">{{ agg.usage_date }}</td>
+            <td class="num">{{ format_traffic(agg.bytes_up) }}</td>
+            <td class="num">{{ format_traffic(agg.bytes_down) }}</td>
+            <td class="num">{{ format_traffic(agg.total_bytes) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("هنوز خلاصه‌ی روزانه‌ای ساخته نشده است.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>آخرین رویدادهای دفتر</h2>
+  {% if events %}
+    <table>
+      <thead>
+        <tr><th>گزارش</th><th>نود</th><th>اتصال</th><th class="num">ترتیب</th><th class="num">ارسال</th><th class="num">دریافت</th></tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+          <tr>
+            <td class="mono sm">{{ fmt_dt(event.reported_at) }}</td>
+            <td class="mono sm">{{ event.node_id }}</td>
+            <td class="mono sm">{{ event.connection_id }}</td>
+            <td class="num">{{ event.sequence_number }}</td>
+            <td class="num">{{ format_traffic(event.bytes_up) }}</td>
+            <td class="num">{{ format_traffic(event.bytes_down) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="muted sm">
+      دفتر فقط-افزودنی است و کلید یکتای آن
+      <span class="mono">(connection_id, sequence_number)</span> است؛ همین است که
+      گزارش تکراری یک نود، مصرف را دو بار حساب نمی‌کند.
+    </div>
+  {% else %}
+    {{ m.empty_state("رویدادی در دفتر نیست.",
+                    "تا وقتی مشتری متصل نشود، دفتر خالی است — که با «مصرف صفر» فرق دارد.") }}
+  {% endif %}
+</div>
+
+{% endblock %}

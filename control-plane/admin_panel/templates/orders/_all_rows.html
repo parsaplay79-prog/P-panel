@@ -1,0 +1,44 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "created", "زمان") }}
+        <th>مرجع</th>
+        <th>مشتری</th>
+        <th>پلن</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        {{ m.sort_header(query, base_path, "updated", "آخرین تغییر") }}
+      </tr>
+    </thead>
+    <tbody>
+      {# No amount column: `orders_all` joins Order/Plan/Customer and a Plan's
+         price is not what a given order was charged — the amount lives on the
+         PaymentAttempt, which is on the detail page. Showing plan price here
+         would let a support agent quote the wrong number to a customer. #}
+      {% for item in items %}
+        <tr>
+          <td class="mono sm">{{ fmt_dt(item.order.created_at) }}</td>
+          <td><a class="mono" href="/admin/orders/{{ item.order.id }}">{{ item.ref }}</a></td>
+          <td>
+            <a href="/admin/customers/{{ item.customer.id }}">{{ item.customer.display_name or item.customer.telegram_user_id }}</a>
+            <div class="muted sm mono">{{ item.customer.telegram_user_id }}</div>
+          </td>
+          <td>{{ item.plan.name }}</td>
+          <td><span class="tag {{ ORDER_STATUS_TAG.get(item.order.status, '') }}">{{ ORDER_STATUS_FA.get(item.order.status, item.order.status) }}</span></td>
+          <td class="mono sm">{{ fmt_dt(item.order.updated_at) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("سفارشی با این شرایط نیست.", "فیلترها را بردارید یا عبارت دیگری جست‌وجو کنید.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/orders/all", page, query) }}

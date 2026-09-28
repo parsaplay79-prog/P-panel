@@ -1,0 +1,53 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "sent", "زمان") }}
+        {{ m.sort_header(query, base_path, "type", "نوع") }}
+        <th>روز کلید</th>
+        <th>مشتری</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="mono sm">{{ fmt_dt(item.log.sent_at) }}</td>
+          <td>
+            <span class="tag">{{ item.kind_fa }}</span>
+            {% if item.kind != item.log.notification_type %}
+              <div class="muted sm mono">{{ item.log.notification_type }}</div>
+            {% endif %}
+          </td>
+          {# The date is part of the deduplication key, not a separate column. It
+             is split out here because "warned on the 24th but not the 25th" is
+             the question, and the sweep failing to run on a day looks exactly
+             like a delivery failure until the key is visible. #}
+          <td class="mono sm">{{ item.day or "—" }}</td>
+          <td>
+            {{ item.customer.display_name or item.customer.telegram_user_id }}
+            {% if item.customer.telegram_username %}
+              <div class="muted sm mono">@{{ item.customer.telegram_username }}</div>
+            {% endif %}
+          </td>
+          <td class="row-actions">
+            <a class="btn-ghost btn-sm" href="/admin/customers/{{ item.customer.id }}">پرونده</a>
+            <a class="btn-ghost btn-sm" href="/admin/tickets?q={{ item.customer.telegram_user_id }}">تیکت‌ها</a>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("اطلاع‌رسانی‌ای با این شرایط نیست.",
+                  "نبودن ردیف برای یک مشتری یعنی جارو به او نرسیده — که با «ارسال ناموفق» فرق دارد.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/notifications", page, query) }}

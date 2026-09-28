@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/usage">مصرف</a>
+    <a class="active" href="/admin/reconcile">بازبینی</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# The ledger is the truth and the aggregate is a cache. `reconcile_usage`
+   re-derives the aggregates *from* the ledger — the direction matters and is
+   not symmetric: repairing the ledger from the aggregate would be repairing the
+   record from the summary. #}
+<div class="alert alert-info">
+  دفتر مصرف (<span class="mono">usage_events</span>) فقط-افزودنی و محافظت‌شده است،
+  پس <b>حقیقت</b> است. خلاصه‌ی روزانه یک کش است که از روی همان دفتر ساخته می‌شود.
+  بازبینی، خلاصه را از روی دفتر بازمی‌سازد.
+</div>
+
+<div class="box">
+  <h2>بازه</h2>
+  <div class="fields">
+    {{ m.field("از تاریخ", since) }}
+    {{ m.field("طول بازه", RECONCILE_LOOKBACK_DAYS ~ " روز") }}
+    {{ m.field("ردیف‌های ناهم‌خوان", drift | length) }}
+    {{ m.field("روزهای بدون خلاصه", missing | length) }}
+  </div>
+</div>
+
+<div class="box">
+  <h2>ردیف‌های ناهم‌خوان</h2>
+  {% if drift %}
+    <table>
+      <thead>
+        <tr><th>کانفیگ</th><th>روز</th><th class="num">خلاصه (اشتباه)</th><th class="num">دفتر (درست)</th></tr>
+      </thead>
+      <tbody>
+        {% for row in drift %}
+          {% set config = configs.get(row.configuration_id) %}
+          <tr>
+            <td>
+              {% if config %}
+                <a href="/admin/usage/{{ config.id }}">{{ config.display_name }}_{{ config.suffix }}</a>
+                <div class="muted sm mono">{{ config.id }}</div>
+              {% else %}
+                <span class="mono sm">{{ row.configuration_id }}</span>
+              {% endif %}
+            </td>
+            <td class="mono sm">{{ row.date }}</td>
+            <td class="num">{{ format_traffic(row.aggregate[0] + row.aggregate[1]) }}</td>
+            <td class="num">{{ format_traffic(row.ledger[0] + row.ledger[1]) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("هیچ ردیف ناهم‌خوانی در این بازه نیست.",
+                    "یعنی خلاصه‌ها با دفتر هم‌خوان هستند.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>روزهای بدون خلاصه</h2>
+  {% if missing %}
+    <div class="muted sm">
+      دفتر این روزها را می‌شناسد ولی ردیف خلاصه‌ای وجود ندارد — نیمی از اختلاف که
+      مقایسه‌ی «ردیف‌های موجود» از دستش می‌دهد.
+    </div>
+    <table>
+      <thead><tr><th>کانفیگ</th><th>روز</th><th class="num">مصرف در دفتر</th></tr></thead>
+      <tbody>
+        {% for row in missing %}
+          {% set config = configs.get(row.configuration_id) %}
+          <tr>
+            <td>
+              {% if config %}
+                <a href="/admin/usage/{{ config.id }}">{{ config.display_name }}_{{ config.suffix }}</a>
+              {% else %}
+                <span class="mono sm">{{ row.configuration_id }}</span>
+              {% endif %}
+            </td>
+            <td class="mono sm">{{ row.date }}</td>
+            <td class="num">{{ format_traffic(row.ledger[0] + row.ledger[1]) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {{ m.empty_state("همه‌ی روزهای دفتر، خلاصه دارند.") }}
+  {% endif %}
+</div>
+
+<div class="box">
+  <h2>اجرای بازبینی</h2>
+  {# Listing the mismatches before offering the repair is what makes the repair
+     a decision rather than a leap: the button rewrites rows, and the operator
+     should see how many before pressing it. #}
+  <p class="muted">
+    این کار خلاصه‌های نادرست را از روی دفتر بازمی‌سازد. تعداد ردیف‌های اصلاح‌شده
+    در گزارش رویدادها ثبت می‌شود.
+  </p>
+  <form method="post" action="/admin/reconcile/run" class="inline">
+    <label for="days">بازه (روز)</label>
+    <input id="days" name="days" type="number" min="1" max="365"
+           value="{{ RECONCILE_LOOKBACK_DAYS }}">
+    <button class="btn-ok" type="submit">اجرای بازبینی</button>
+  </form>
+</div>
+
+{% endblock %}

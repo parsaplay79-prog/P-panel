@@ -1,0 +1,66 @@
+{% import "_macros.html" as m %}
+{% if accounts %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "label", "برچسب") }}
+        <th>شناسه‌ی حساب</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        <th class="num">نودها</th>
+        {{ m.sort_header(query, base_path, "added", "افزوده‌شده") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for account in accounts %}
+        {% set node_count = node_counts.get(account.id, 0) %}
+        <tr>
+          <td>{{ account.label }}</td>
+          <td class="mono sm">{{ account.cf_account_id }}</td>
+          <td>
+            <span class="tag {{ ACCOUNT_STATUS_TAG.get(account.status, '') }}">
+              {{ ACCOUNT_STATUS_FA.get(account.status, account.status) }}
+            </span>
+          </td>
+          <td class="num">{{ node_count }}</td>
+          <td class="mono sm">{{ fmt_dt(account.added_at, with_time=False) }}</td>
+          <td class="row-actions">
+            {# Verify is enqueued, not awaited — a Cloudflare round trip in a
+               request makes the button hang, and a revoked token should be found
+               by a worker that can retry. The job only stamps the status; it
+               never disables the account, because an account with nodes still
+               serving customers must not be dropped by a transient API blip. #}
+            {{ m.post_form("/admin/cloudflare/" ~ account.id ~ "/verify", "بررسی توکن",
+                           cls="btn-ghost btn-sm") }}
+            {% if account.status == 'disabled' %}
+              {{ m.post_form("/admin/cloudflare/" ~ account.id ~ "/enable", "فعال‌سازی") }}
+            {% else %}
+              {{ m.confirm_form("/admin/cloudflare/" ~ account.id ~ "/disable", "غیرفعال‌سازی",
+                                confirm_text="این حساب غیرفعال شود؟ فقط انتخاب آن برای نود جدید متوقف می‌شود؛ نودهای موجود به کار خود ادامه می‌دهند.",
+                                cls="btn-ghost btn-sm") }}
+            {% endif %}
+            {# Deletion is refused while any node — even a decommissioned one —
+               points here: `nodes.cloudflare_account_id` is NOT NULL, and the
+               node row is the record of what hardware existed. #}
+            {% if not node_count %}
+              {{ m.confirm_form("/admin/cloudflare/" ~ account.id ~ "/delete", "حذف",
+                                confirm_text="حساب «" ~ account.label ~ "» حذف شود؟",
+                                cls="btn-ghost btn-sm") }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("هیچ حساب Cloudflare ثبت نشده است.",
+                  "تا وقتی حسابی ثبت نشود، هیچ نودی ساخته نمی‌شود و پلن‌ها نودی برای سرویس‌دادن ندارند.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/cloudflare", page, query) }}

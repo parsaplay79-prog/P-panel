@@ -1,0 +1,108 @@
+{% import "_macros.html" as m %}
+{% if admins %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "telegram", "شناسه‌ی تلگرام") }}
+        <th>نام کاربری وب</th>
+        {{ m.sort_header(query, base_path, "role", "نقش") }}
+        <th>دسترسی‌ها</th>
+        {{ m.sort_header(query, base_path, "created", "افزوده‌شده") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in admins %}
+        <tr>
+          <td class="mono sm">
+            {{ item.telegram_user_id }}
+            {% if item.id == signed_in_id %}<span class="tag tag-ok">شما</span>{% endif %}
+          </td>
+          <td class="mono sm">
+            {% if item.web_username %}{{ item.web_username }}
+            {% else %}<span class="muted">بدون ورود وب</span>{% endif %}
+          </td>
+          <td>
+            {# The role is changed in place rather than on a detail page: there is
+               no admin detail page, and a role is one value — a whole page for it
+               would be a page you visit to change one dropdown. #}
+            <form method="post" action="/admin/admins/{{ item.id }}/role" class="inline">
+              <select name="role" aria-label="نقش">
+                {% for role in ALL_ROLES %}
+                  <option value="{{ role }}" {% if item.role == role %}selected{% endif %}>
+                    {{ ROLE_LABELS.get(role, role) }}
+                  </option>
+                {% endfor %}
+              </select>
+              <button class="btn-sm" type="submit">اعمال</button>
+            </form>
+            {% if item.role == 'OWNER' %}
+              <div class="muted sm">مالک، همه‌ی دسترسی‌ها را دارد.</div>
+            {% endif %}
+          </td>
+          <td>
+            {# Granting a role you cannot describe is how people over-grant, so
+               the actual permission set is printed, in the operator's language. #}
+            {% for perm in ROLE_PERMISSIONS.get(item.role, []) | sort %}
+              <div class="muted sm">{{ PERM_LABELS.get(perm, perm) }}</div>
+            {% endfor %}
+          </td>
+          <td class="mono sm">{{ fmt_dt(item.created_at, with_time=False) }}</td>
+          <td class="row-actions">
+            {# Web credentials and session revocation live in a disclosure rather
+               than in the row: they are used rarely, and a password field sitting
+               open in a list is a password field that gets typed into by mistake.
+               A plain <details> so it works with no JavaScript at all. #}
+            <details>
+              <summary class="btn-ghost btn-sm">ورود وب</summary>
+              <div class="inline-box">
+                <form method="post" action="/admin/admins/{{ item.id }}/credentials">
+                  <label for="u{{ item.id }}">نام کاربری</label>
+                  <input id="u{{ item.id }}" name="web_username" type="text" dir="ltr"
+                         value="{{ item.web_username or '' }}" autocomplete="off">
+                  <div class="muted sm">
+                    خالی گذاشتن و ثبت، ورود وب این ادمین را <b>حذف</b> می‌کند
+                    (هویت تلگرام‌اش می‌ماند).
+                  </div>
+                  <label for="p{{ item.id }}">رمز عبور</label>
+                  <input id="p{{ item.id }}" name="password" type="password"
+                         dir="ltr" autocomplete="new-password">
+                  <label for="c{{ item.id }}">تکرار رمز عبور</label>
+                  <input id="c{{ item.id }}" name="confirm" type="password"
+                         dir="ltr" autocomplete="new-password">
+                  <div class="muted sm">حداقل ۱۲ کاراکتر. ذخیره، همه‌ی نشست‌های قبلی این ادمین را باطل می‌کند.</div>
+                  <div class="actions"><button class="btn-sm" type="submit">ذخیره‌ی ورود</button></div>
+                </form>
+
+                {{ m.confirm_form("/admin/admins/" ~ item.id ~ "/revoke-sessions",
+                                  "باطل کردن همه‌ی نشست‌ها",
+                                  confirm_text="همه‌ی نشست‌های فعال این ادمین باطل شود؟" ~
+                                               (" شما از پنل خارج می‌شوید." if item.id == signed_in_id else ""),
+                                  cls="btn-ghost btn-sm") }}
+              </div>
+            </details>
+
+            {# Self-deletion is hidden rather than shown-and-refused: it is never
+               what anyone means, and the route refuses it anyway. The last-OWNER
+               case cannot be counted here, so it stays a route-side refusal. #}
+            {% if item.id != signed_in_id %}
+              {{ m.confirm_form("/admin/admins/" ~ item.id ~ "/delete", "حذف",
+                                confirm_text="این ادمین حذف شود؟ رکوردهای تاریخی که او ثبت کرده باقی می‌مانند.",
+                                cls="btn-ghost btn-sm") }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("ادمینی با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/admins", page, query) }}

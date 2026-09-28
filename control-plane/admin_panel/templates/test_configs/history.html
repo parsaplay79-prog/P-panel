@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/test">کانفیگ تستی</a>
+    <a class="active" href="/admin/test/history">تاریخچه‌ی تستی‌ها</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% set status_options = [] %}
+{% for value, label in CONFIG_STATUS_FA.items() %}
+  {% set _ = status_options.append((value, label)) %}
+{% endfor %}
+
+{{ m.toolbar("/admin/test/history", query,
+              {"status": status_options},
+              "جست‌وجوی شناسه‌ی تلگرام، نام مشتری یا نام کانفیگ…") }}
+
+<div class="muted sm">
+  نمای سرعت: الگوی سوءاستفاده در سطح پلتفرم (حساب‌های زیاد، یک اپراتور) فقط
+  به‌صورت فهرست دیده می‌شود، و این همان فهرست است.
+</div>
+
+  <div id="rows">{% include "test_configs/_rows.html" %}</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>شناسه</th>
+        {{ m.sort_header(query, base_path, "status", "وضعیت") }}
+        <th>موضوع</th>
+        <th>مشتری</th>
+        <th class="num">پیام‌ها</th>
+        {{ m.sort_header(query, base_path, "updated", "آخرین تغییر") }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="mono sm"><a href="/admin/tickets/{{ item.ref }}">{{ item.ref }}</a></td>
+          <td>
+            <span class="tag {{ TICKET_STATUS_TAG.get(item.ticket.status, '') }}">
+              {{ TICKET_STATUS_FA.get(item.ticket.status, item.ticket.status) }}
+            </span>
+          </td>
+          <td>{{ item.ticket.subject }}</td>
+          <td>
+            {{ item.customer.display_name or item.customer.telegram_user_id }}
+            {% if item.customer.telegram_username %}
+              <div class="muted sm mono">@{{ item.customer.telegram_username }}</div>
+            {% endif %}
+          </td>
+          <td class="num">{{ message_counts.get(item.ticket.id, 0) }}</td>
+          <td class="mono sm">{{ fmt_dt(item.ticket.updated_at) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("تیکتی با این شرایط نیست.",
+                  "صف خالی یعنی هیچ مشتری منتظر پاسخ نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/tickets", page, query) }}

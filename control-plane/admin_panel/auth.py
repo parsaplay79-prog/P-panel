@@ -199,7 +199,7 @@ def set_session_cookie(response, admin: Admin) -> None:
     page from making the browser POST to /admin/orders/{id}/approve with the
     admin's cookie attached. There is no CSRF token in this panel, so this
     attribute is the entire cross-site request defence — see the note in
-    api/routes/admin_panel.py.
+    admin_panel/routes/auth_routes.py.
     """
     response.set_cookie(
         COOKIE_NAME,

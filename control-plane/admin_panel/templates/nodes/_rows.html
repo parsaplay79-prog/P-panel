@@ -1,0 +1,61 @@
+{% import "_macros.html" as m %}
+{% if items %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "نود") }}
+        {{ m.sort_header(query, base_path, "state", "وضعیت") }}
+        {{ m.sort_header(query, base_path, "health", "سلامت", numeric=true) }}
+        {{ m.sort_header(query, base_path, "load", "بار", numeric=true) }}
+        <th>استخرها</th>
+        <th>حساب</th>
+        {{ m.sort_header(query, base_path, "created", "ساخت") }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a href="/admin/nodes/{{ item.node.id }}">{{ item.node.worker_script_name }}</a>
+            {% if item.node.custom_domain %}
+              <div class="muted sm mono">{{ item.node.custom_domain }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="tag {{ NODE_STATE_TAG.get(item.node.state, '') }}">
+              {{ NODE_STATE_FA.get(item.node.state, item.node.state) }}
+            </span>
+          </td>
+          <td class="num">{{ item.node.health_score | int }}</td>
+          <td class="num">
+            {{ item.node.current_assignment_count }}<span class="muted">/{{ item.node.max_assignment_count }}</span>
+          </td>
+          <td>
+            {# A node in no pool is invisible to fulfilment. Saying so here, in
+               warning colour, is the difference between "healthy node" and
+               "healthy node that can never be picked". #}
+            {% set names = pool_names.get(item.node.id, []) %}
+            {% if names %}
+              {% for name in names %}<span class="tag">{{ name }}</span> {% endfor %}
+            {% else %}
+              <span class="tag tag-bad">بدون استخر</span>
+            {% endif %}
+          </td>
+          <td class="muted sm">{{ item.account.label if item.account else '—' }}</td>
+          <td class="mono sm">{{ fmt_dt(item.node.created_at, with_time=False) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("نودی با این شرایط نیست.",
+                  "اگر هیچ نودی نساخته‌اید، پلن‌ها هیچ نودی برای سرویس‌دادن ندارند.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/nodes", page, query) }}

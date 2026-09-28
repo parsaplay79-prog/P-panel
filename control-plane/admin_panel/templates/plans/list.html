@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a class="active" href="/admin/plans">پلن‌ها</a>
+    <a class="btn-ok btn-sm" href="/admin/plans/new">پلن جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+<p class="lede">
+  پلن یک الگو است، نه قرارداد: تغییر قیمت یا مدت، مشتری‌های فعلی را عوض نمی‌کند.
+  فقط فروش‌های بعدی با شرایط تازه انجام می‌شوند.
+</p>
+
+{{ m.toolbar("/admin/plans", query,
+              {"active": [("1", "فعال"), ("0", "غیرفعال")]},
+              "جست‌وجوی نام پلن…") }}
+
+  <div id="rows">{% include "plans/_rows.html" %}</div>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% set p = request.query_params %}
+{% set val_tid = p.get('tid') or '' %}
+{% set val_role = p.get('role') or '' %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/admins">ادمین‌ها</a>
+    <a class="active" href="#">ادمین جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# The Telegram id is required and the web login is optional — the reverse of
+   what a generic user form would do, and deliberate: `Admin.telegram_user_id`
+   is NOT NULL and unique, and it is the identity the bot gates on. An admin who
+   existed only as a web login could not be reached by the bot and could not be
+   created from it. The web login is an addition to a Telegram identity. #}
+<form method="post" action="/admin/admins/new" class="form-page box">
+  <label for="telegram_user_id">شناسه‌ی تلگرام</label>
+  <input id="telegram_user_id" name="telegram_user_id" type="text" dir="ltr" required
+         inputmode="numeric" pattern="[0-9]+" value="{{ val_tid }}" placeholder="123456789">
+  <div class="muted sm">
+    ادمین با همین شناسه در ربات شناخته می‌شود. برای پیدا کردنش، در ربات
+    <span class="mono">/id</span> بزنید.
+  </div>
+
+  <label for="role">نقش</label>
+  <select id="role" name="role" required>
+    <option value="">— انتخاب کنید —</option>
+    {% for role in ALL_ROLES %}
+      <option value="{{ role }}" {% if val_role == role %}selected{% endif %}>
+        {{ ROLE_LABELS.get(role, role) }}
+      </option>
+    {% endfor %}
+  </select>
+
+  <div class="box">
+    <div class="muted sm">دسترسی‌های هر نقش:</div>
+    <table>
+      <thead><tr><th>نقش</th><th>دسترسی‌ها</th></tr></thead>
+      <tbody>
+        {% for role in ALL_ROLES %}
+          <tr>
+            <td>{{ ROLE_LABELS.get(role, role) }}</td>
+            <td class="muted sm">
+              {% for perm in ROLE_PERMISSIONS.get(role, []) | sort %}
+                {{ PERM_LABELS.get(perm, perm) }}{% if not loop.last %}؛ {% endif %}
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>ورود وب (اختیاری)</h2>
+  <div class="muted sm">
+    اگر خالی بماند، ادمین فقط از طریق ربات کار می‌کند. اگر پر شود، هر سه فیلد
+    لازم است — نام کاربری بدون رمز، حسابی است که هیچ‌کس نمی‌تواند واردش شود.
+  </div>
+
+  <label for="web_username">نام کاربری</label>
+  <input id="web_username" name="web_username" type="text" dir="ltr"
+         autocomplete="off" maxlength="64">
+  <div class="muted sm">بدون فاصله و بدون <span class="mono">$</span>.</div>
+
+  <label for="password">رمز عبور</label>
+  <input id="password" name="password" type="password" dir="ltr" autocomplete="new-password">
+  <label for="confirm">تکرار رمز عبور</label>
+  <input id="confirm" name="confirm" type="password" dir="ltr" autocomplete="new-password">
+  <div class="muted sm">حداقل ۱۲ کاراکتر.</div>
+
+  <div class="actions">
+    <button class="btn-ok" type="submit">ساخت ادمین</button>
+    <a class="btn-ghost" href="/admin/admins">انصراف</a>
+  </div>
+</form>
+{% endblock %}

@@ -14,25 +14,46 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+from db.base import SessionLocal
 from db.migrate import run_migrations
 from domain.health import HEALTH_CHECK_INTERVAL, health_check_pass
+from domain.jobs import job_consumer_pass
 from domain.notifications import expiry_and_quota_sweep
 from domain.reconcile import RECONCILE_LOOKBACK_DAYS, reconcile_usage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("verdent.worker")
 
+JOB_POLL_INTERVAL = 5            # seconds — a queued node job should start promptly
 RECONCILE_INTERVAL = 300          # 5 min
 QUOTA_PUSH_INTERVAL = 300         # 5 min
 FULL_RECONCILE_INTERVAL = 86400   # once a day: unbounded pass
 
 
 async def job_queue_loop() -> None:
-    """Job queue consumer — provisioning retries. Orders stuck in
-    PROVISIONING are visible in the admin panel and retried from there."""
-    logger.info("job queue consumer: orders retry via admin panel (provisioning Phase 2)")
+    """Drain the background queue.
+
+    This used to be a stub that slept for an hour and logged that retries
+    "happen via the admin panel" — but the panel had no retry either, so a node
+    whose provisioning failed was simply lost. The loop is now real: claim with
+    SKIP LOCKED (so the web service's own consumer and this one never collide),
+    run, record the outcome.
+
+    Every job opens its own session. A long-lived session in a loop holds a
+    connection and a snapshot across minutes of work, and one failed job would
+    poison the transaction for the next — `job_consumer_pass` commits per job
+    and `run_job` never raises.
+    """
+    logger.info("job queue consumer started (poll every %ss)", JOB_POLL_INTERVAL)
     while True:
-        await asyncio.sleep(3600)
+        try:
+            async with SessionLocal() as db:
+                ran = await job_consumer_pass(db)
+            if ran == 0:
+                await asyncio.sleep(JOB_POLL_INTERVAL)
+        except Exception:  # noqa: BLE001 — the loop must survive anything
+            logger.exception("job consumer pass failed")
+            await asyncio.sleep(JOB_POLL_INTERVAL)
 
 
 async def usage_reconcile_loop() -> None:

@@ -1,0 +1,84 @@
+{% import "_macros.html" as m %}
+{% if plans %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "name", "نام") }}
+        {{ m.sort_header(query, base_path, "price", "قیمت", numeric=true) }}
+        {{ m.sort_header(query, base_path, "duration", "مدت", numeric=true) }}
+        <th>حجم</th>
+        <th>دستگاه</th>
+        <th>استخر</th>
+        <th>فروش</th>
+        {{ m.sort_header(query, base_path, "active", "وضعیت") }}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for plan in plans %}
+        {% set sold = order_counts.get(plan.id, 0) %}
+        <tr>
+          <td>
+            <a href="/admin/plans/{{ plan.id }}/edit">{{ plan.name }}</a>
+            {% if plan.description %}<div class="muted sm">{{ plan.description }}</div>{% endif %}
+          </td>
+          <td class="num">{{ format_price(plan.price_amount, plan.price_currency) }}</td>
+          <td class="num">{{ format_duration(plan.duration_days) }}</td>
+          <td class="num">
+            {% if plan.traffic_quota_bytes %}
+              {{ format_traffic(plan.traffic_quota_bytes) }}
+            {% else %}
+              <span class="muted">نامحدود</span>
+            {% endif %}
+          </td>
+          <td class="num">{{ plan.device_limit }}</td>
+          <td class="muted sm">{{ pools.get(plan.pool_id).name if pools.get(plan.pool_id) else '—' }}</td>
+          <td class="num">
+            {% if sold %}
+              <a href="/admin/orders/all?q={{ plan.name }}">{{ sold }}</a>
+            {% else %}
+              <span class="muted">۰</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if plan.is_active %}
+              <span class="tag tag-ok">فعال</span>
+            {% else %}
+              <span class="tag tag-bad">غیرفعال</span>
+            {% endif %}
+          </td>
+          <td class="row-actions">
+            <a class="btn-ghost btn-sm" href="/admin/plans/{{ plan.id }}/edit">ویرایش</a>
+
+            {# Toggle and delete are rendered only where the route would accept
+               them. The delete button on a sold plan is not shown at all — the
+               route refuses it with `has_orders`, and a button that always fails
+               teaches operators to distrust the panel. #}
+            {% if plan.is_active %}
+              {{ m.confirm_form("/admin/plans/" ~ plan.id ~ "/toggle", "غیرفعال",
+                                confirm_text="این پلن از منوی خرید حذف شود؟ مشتری‌های فعلی تحت تأثیر قرار نمی‌گیرند.") }}
+            {% else %}
+              {{ m.post_form("/admin/plans/" ~ plan.id ~ "/toggle", "فعال‌سازی", cls="btn-ok btn-sm") }}
+            {% endif %}
+
+            {% if not sold %}
+              {{ m.confirm_form("/admin/plans/" ~ plan.id ~ "/delete", "حذف",
+                                confirm_text="این پلن حذف شود؟ هیچ سفارشی روی آن ثبت نشده است.") }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("پلنی با این شرایط نیست.",
+                  "اگر هیچ پلنی نساخته‌اید، مشتری‌ها چیزی برای خریدن نمی‌بینند — از دکمه‌ی «پلن جدید» شروع کنید.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/plans", page, query) }}

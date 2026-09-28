@@ -47,6 +47,26 @@ class CloudflareClient:
         self._headers = _auth_headers(api_token_encrypted, encryption_key_b64)
         self._account_id = account_id
 
+    @classmethod
+    def from_plaintext_token(cls, api_token: str, account_id: str = "") -> "CloudflareClient":
+        """Build a client from a token that has not been stored yet.
+
+        The add-account form has to verify a token BEFORE there is a
+        `cloudflare_accounts` row to encrypt it into — otherwise an invalid
+        token is only discovered after it has been written to the database, and
+        the operator is left with a row that looks configured and fails at
+        provisioning time. This constructor is the only path that holds a
+        plaintext token, it lives entirely inside the verification call, and
+        nothing logs or returns it.
+
+        `account_id` may be empty for the `/user/tokens/verify` call, which
+        needs no account scope. It is required before any account-scoped call.
+        """
+        client = cls.__new__(cls)
+        client._headers = {"Authorization": f"Bearer {api_token}"}
+        client._account_id = account_id
+        return client
+
     async def _request(self, method: str, path: str, *, json_body: Any = None, content: Any = None, data: Any = None, files: Any = None, headers: dict | None = None) -> dict[str, Any]:
         url = f"{CF_API_BASE}{path}"
         merged = {**self._headers, **(headers or {})}
@@ -143,3 +163,66 @@ class CloudflareClient:
 
     async def delete_worker_script(self, script_name: str) -> None:
         await self._request("DELETE", f"/accounts/{self._account_id}/workers/scripts/{script_name}")
+
+    # -- Account verification (Document 1 §M) ------------------------------
+
+    async def verify_token(self) -> dict[str, Any]:
+        """Confirm the token is live and report its status.
+
+        Document 1 §M: "Validate token + fetch account details" then "Check
+        permissions actually granted match what's required; reject early with a
+        clear reason if not". This is the first half.
+
+        `/user/tokens/verify` is the only endpoint that works with a token
+        scoped as narrowly as ours — it needs no account permission at all, so a
+        token that can provision a Node can also answer "am I valid". It returns
+        `{"id", "status": "active"|"disabled"|"expired"}`.
+
+        Raises CloudflareError with Cloudflare's own message on an invalid or
+        expired token, so the operator sees "Invalid API Token" rather than a
+        generic failure they have to guess at.
+        """
+        result = _check(await self._request("GET", "/user/tokens/verify"), "verify API token")
+        status = result.get("status")
+        if status != "active":
+            raise CloudflareError(
+                f"the API token is not active (status: {status!r}) — create a new token "
+                "with Workers Scripts:Edit, Workers KV Storage:Edit and Account Settings:Read"
+            )
+        return result
+
+    async def list_accounts(self) -> list[dict[str, Any]]:
+        """Accounts this token can see. Empty list means the token is scoped to
+        nothing useful, which is the second half of Document 1 §M's early check.
+
+        A token with Workers/KV permissions but no account read scope verifies
+        as `active` and then fails at provisioning time with an opaque 403
+        somewhere in the middle of the KV-namespace call — after a namespace may
+        already have been created. Asking for the account list up front turns
+        that into a clear refusal before anything is made.
+        """
+        result = await self._request("GET", "/accounts?per_page=50")
+        if not result.get("success"):
+            return []
+        return list(result.get("result") or [])
+
+    async def probe_provisioning_permissions(self) -> list[str]:
+        """Which required capabilities are missing. Empty list = ready.
+
+        Checked by listing KV namespaces and worker scripts, both read-only:
+        the token must hold Edit on each to be able to provision, and a token
+        that cannot even LIST is certainly not going to be able to CREATE. Doing
+        this before any write is what makes "reject early with a clear reason"
+        real rather than aspirational.
+        """
+        missing: list[str] = []
+
+        kv = await self._request("GET", f"/accounts/{self._account_id}/storage/kv/namespaces?per_page=1")
+        if not kv.get("success"):
+            missing.append("Workers KV Storage:Edit")
+
+        scripts = await self._request("GET", f"/accounts/{self._account_id}/workers/scripts")
+        if not scripts.get("success"):
+            missing.append("Workers Scripts:Edit")
+
+        return missing

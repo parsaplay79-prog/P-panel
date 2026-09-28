@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block content %}
+{{ m.toolbar("/admin/customers", query,
+              {"status": [("active", "فعال"), ("banned", "مسدود")]},
+              "جست‌وجوی نام، نام کاربری یا شناسه‌ی تلگرام…") }}
+
+  <div id="rows">{% include "customers/_rows.html" %}</div>
+{% endblock %}

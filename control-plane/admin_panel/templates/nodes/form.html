@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block sub %}
+  <div class="sub-nav">
+    <a href="/admin/nodes">نودها</a>
+    <a class="active" href="#">نود جدید</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{# Provisioning is a background job, not a request. The form's job is to catch
+   everything knowable without the network (name shape, uniqueness, account
+   existence, capacity) so an obvious mistake is a field error rather than a job
+   that fails ninety seconds later — and then to hand off and get out of the
+   way. #}
+<div class="alert alert-info">
+  ساخت نود در پس‌زمینه انجام می‌شود: ساخت KV، بارگذاری اسکریپت، تنظیم دامنه و
+  seed — حدود یک تا دو دقیقه. پس از ثبت، به صفحه‌ی کار منتقل می‌شوید و پیشرفت
+  را همان‌جا می‌بینید. نیازی نیست این صفحه باز بماند.
+</div>
+
+<form method="post" action="/admin/nodes/new" class="form-page box">
+  <label for="script_name">نام اسکریپت</label>
+  <input id="script_name" name="script_name" type="text" dir="ltr" required
+         pattern="[a-z0-9][a-z0-9-]{0,30}"
+         placeholder="node-tehran-1">
+  <div class="muted sm">
+    حروف کوچک، رقم و خط تیره؛ باید با حرف کوچک یا رقم شروع شود. این نام روی
+    Cloudflare ساخته می‌شود و بعداً قابل تغییر نیست.
+  </div>
+
+  <label for="account_id">حساب Cloudflare</label>
+  {% if accounts %}
+    <select id="account_id" name="account_id" required>
+      <option value="">— انتخاب کنید —</option>
+      {% for account in accounts %}
+        <option value="{{ account.id }}">{{ account.label }} ({{ account.cf_account_id }})</option>
+      {% endfor %}
+    </select>
+    <div class="muted sm">
+      انتخاب صریح است چون با چند حساب، «اولی» تصمیمی نیست که شما گرفته باشید و
+      نود در حسابی ساخته می‌شود که انتظارش را نداشتید.
+    </div>
+  {% else %}
+    <div class="alert alert-bad">
+      هیچ حساب Cloudflare ثبت نشده است.
+      <a href="/admin/cloudflare/new">اول یک حساب اضافه کنید</a>.
+    </div>
+  {% endif %}
+
+  <label for="capability_tags">تگ‌های قابلیت</label>
+  <input id="capability_tags" name="capability_tags" type="text" dir="ltr"
+         value="{{ default_tags }}">
+  <div class="muted sm">
+    با کاما جدا می‌شوند. استخرها بر اساس این تگ‌ها نود را می‌پذیرند؛ نودی که تگ
+    یک استخر را نداشته باشد هرگز به آن استخر اضافه نمی‌شود.
+  </div>
+
+  <label for="max_assignment_count">حداکثر مشتری</label>
+  <input id="max_assignment_count" name="max_assignment_count" type="number"
+         min="1" max="1000" value="3">
+  <div class="muted sm">
+    سقف واقعی <span class="mono">min(این عدد، سقف استخر)</span> است — استخر
+    می‌تواند سخت‌گیرتر کند ولی هرگز سقف نود را بالا نمی‌برد.
+  </div>
+
+  <div class="actions">
+    <button class="btn-ok" type="submit" {% if not accounts %}disabled{% endif %}>ساخت نود</button>
+    <a class="btn-ghost" href="/admin/nodes">انصراف</a>
+  </div>
+</form>
+{% endblock %}

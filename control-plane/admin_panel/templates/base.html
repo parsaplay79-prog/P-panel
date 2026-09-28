@@ -4,27 +4,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} — پنل مدیریت {{ app_name }}</title>
-  <link rel="stylesheet" href="/admin/static/admin.css?v=1">
+  <link rel="stylesheet" href="/admin/static/admin.css?v=3">
+  {# HTMX is vendored, not from a CDN: the panel must work on a network where
+     only Cloudflare is reachable, and a CDN outage should not take out admin
+     access. admin.js layers debouncing, confirmations and the row-refresh
+     polling on top. #}
+  <script src="/admin/static/htmx.min.js?v=3" defer></script>
+  <script src="/admin/static/admin.js?v=3" defer></script>
 </head>
 <body>
+{% import "_macros.html" as m %}
 <div class="layout">
   <aside class="sidebar">
     <div class="brand">
       {{ app_name }}
       <small>پنل مدیریت</small>
     </div>
+
     <nav class="nav">
-      {% for item in nav %}
-        <a href="{{ item.href }}"
-           class="{% if request.url.path == item.href %}active{% endif %}">
-          {{ item.icon }} {{ item.label }}
-        </a>
+      {% for group in nav_groups %}
+        <div class="nav-group">
+          <div class="nav-group-label">{{ group.icon }} {{ group.label }}</div>
+          {% for item in group.items %}
+            <a href="{{ item.href }}"
+               class="{% if active_nav | default('') == item.href %}active{% endif %}">
+              {{ item.icon }} {{ item.label }}
+            </a>
+          {% endfor %}
+        </div>
       {% endfor %}
     </nav>
+
     {% if admin %}
     <div class="who">
-      <div>نقش: <b>{{ admin.role }}</b></div>
-      <div class="mono">{{ admin.web_username }}</div>
+      <div class="who-role">{{ (ROLE_LABELS | default({})).get(admin.role, admin.role) }}</div>
+      <div class="mono">{{ admin.web_username or admin.telegram_user_id }}</div>
       <form method="post" action="/admin/logout">
         <button class="btn-ghost btn-sm" type="submit">خروج</button>
       </form>
@@ -34,6 +48,16 @@
 
   <main class="main">
     <h1>{{ title }}</h1>
+
+    {# The flash comes from the redirect's query string, so it disappears on the
+       next navigation without any server-side session state to expire. #}
+    {% if flash %}
+      <div class="alert alert-{{ flash.level }}{% if flash.level == 'info' %} alert-info{% endif %}"
+           data-flash-code="{{ flash.code }}">
+        {{ flash.text }}
+      </div>
+    {% endif %}
+
     {% block sub %}{% endblock %}
     {% block content %}{% endblock %}
   </main>

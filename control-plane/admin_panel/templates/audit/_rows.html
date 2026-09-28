@@ -1,0 +1,81 @@
+{% import "_macros.html" as m %}
+
+{# Where a target can be opened, for the target types that have a page. A type
+   with no entry simply renders as text — a link that 404s is worse than no
+   link, and this map is the honest list of what is reachable. #}
+{% set target_paths = {
+  "node": "/admin/nodes/",
+  "pool": "/admin/pools/",
+  "configuration": "/admin/configurations/",
+  "customer": "/admin/customers/",
+  "order": "/admin/orders/",
+  "job": "/admin/jobs/",
+  "gaming_profile": "/admin/gaming/",
+  "cloudflare_account": "/admin/cloudflare/",
+} %}
+
+{% if rows %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {{ m.sort_header(query, base_path, "created", "زمان") }}
+        {{ m.sort_header(query, base_path, "actor", "عامل") }}
+        {{ m.sort_header(query, base_path, "action", "اقدام") }}
+        <th>هدف</th>
+        <th>جزئیات</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="mono sm">{{ fmt_dt(row.created_at) }}</td>
+          <td>
+            {% set actor = actors.get(row.actor_id) %}
+            {% if actor %}
+              {{ actor.web_username or actor.telegram_user_id }}
+              <div class="muted sm">{{ ROLE_LABELS.get(actor.role, actor.role) }}</div>
+            {% else %}
+              <span class="muted sm">{{ row.actor_type or "سیستم" }}</span>
+            {% endif %}
+          </td>
+          <td class="mono sm">{{ row.action }}</td>
+          <td>
+            {% if row.target_type %}
+              {% set base = target_paths.get(row.target_type) %}
+              {% if base and row.target_id %}
+                <a href="{{ base }}{{ row.target_id }}">{{ row.target_type }}</a>
+              {% else %}
+                <span class="muted sm">{{ row.target_type }}</span>
+              {% endif %}
+              {% if row.target_id %}
+                <div class="muted sm mono">{{ row.target_id }}</div>
+              {% endif %}
+            {% else %}
+              <span class="muted sm">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {# Rendered as JSON, not summarised: the column holds whatever the
+               caller passed, and a page that tried to make it pretty would have
+               to know every action's shape. #}
+            {% if row.details_json %}
+              <pre class="uri mono sm">{{ row.details_json | tojson(indent=2) }}</pre>
+            {% else %}
+              <span class="muted sm">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ m.empty_state("رویدادی با این شرایط نیست.") }}
+{% endif %}
+
+{# The pager lives inside the partial, not beside it, so an HTMX live
+   search swaps the range and the page numbers along with the rows. A pager
+   outside the swap target keeps showing the previous result's count —
+   "1–50 of 312" under a search that matched four rows. #}
+{{ m.pager("/admin/audit", page, query) }}
