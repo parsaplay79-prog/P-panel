@@ -15,6 +15,14 @@ No network and no database: the session is a stub that answers the exact
 queries the handlers issue, and the nonce store is a dict with SET NX semantics.
 """
 
+# `FakeSession.__init__` annotates its first parameter as `FakeNode`, which is
+# defined further down the file. Python 3.14 evaluates annotations lazily (PEP
+# 649) so that resolves on its own, but on 3.12 — the version the deployed
+# image runs — the annotation is evaluated eagerly at class-creation time and
+# raises NameError before a single check runs. Deferring annotations here keeps
+# the file importable on both.
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
