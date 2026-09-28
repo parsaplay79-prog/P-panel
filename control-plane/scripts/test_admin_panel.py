@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import admin_panel.auth as auth  # noqa: E402
 from admin_panel import routes as panel_routes  # noqa: E402
 from domain import rbac  # noqa: E402
+from jinja2 import nodes as jnodes  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "admin_panel" / "templates"
@@ -1638,6 +1639,195 @@ def section_templates() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 9. every route passes the variables its template reads
+# ---------------------------------------------------------------------------
+
+
+def _tolerated_undefined(parsed) -> set[str]:
+    """Names a template reads defensively, so StrictUndefined will not fire.
+
+    Two idioms, both deliberate opt-outs from strict mode:
+
+      * `{{ name | default(x) }}` — the `default` filter swallows the
+        undefined and yields `x`.
+      * `{{ name or x }}` — `Undefined` is falsey, so the `or` yields `x`.
+
+    Either counts only when the guarded name is the *base* of the expression,
+    i.e. the thing that would otherwise raise. `{% if a and b %}` and
+    `{% for x in a.b %}` are deliberately NOT included: short-circuiting does
+    not protect `a` in `a.b`, and `for` raises on an undefined iterable.
+    """
+    guarded: set[str] = set()
+
+    def base_name(node):
+        """The name a filter/boolean is applied to, unwrapping `a.b`/`a[0]`."""
+        while True:
+            if isinstance(node, jnodes.Getattr):
+                node = node.node
+            elif isinstance(node, jnodes.Getitem):
+                node = node.node
+            else:
+                return node.name if isinstance(node, jnodes.Name) else None
+
+    for node in parsed.find_all(jnodes.Filter):
+        if node.name == "default" and node.node is not None:
+            name = base_name(node.node)
+            if name:
+                guarded.add(name)
+    for node in parsed.find_all(jnodes.Or):
+        name = base_name(node.left)
+        if name:
+            guarded.add(name)
+    for node in parsed.find_all(jnodes.And):
+        name = base_name(node.left)
+        if name:
+            guarded.add(name)
+    return guarded
+
+
+def section_template_contracts() -> None:
+    """No template may read a name its route does not pass.
+
+    Starlette's `Jinja2Templates` runs the environment with `StrictUndefined`,
+    so a template that reads a name the route forgot to pass raises
+    `UndefinedError` and the page returns HTTP 500 — with a template that is
+    otherwise correct and a route that is otherwise correct. That is what
+    happened twice in production: `/admin/health/{id}` and `/admin/tickets/{ref}`
+    each rendered a status mapping their sibling page had and neither route
+    supplied.
+
+    A real render only proves the pages that HAVE a row. A detail page on an
+    empty table is never reached by a crawl, so this walks the source instead
+    and covers every route/template pair regardless of data.
+    """
+    import ast
+
+    from jinja2 import Environment, FileSystemLoader, meta
+
+    from admin_panel import templating
+
+    routes_dir = ROOT / "admin_panel" / "routes"
+    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
+
+    # Names every page gets from the shared context processor, so they are not
+    # expected from the route. Read out of `_context`'s source rather than
+    # called: it needs a Request, and its flash/params handling is not the
+    # thing under test.
+    proc = ast.parse(inspect.getsource(templating._context).strip())
+    ambient: set[str] = set()
+    for node in ast.walk(proc):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            ambient = {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
+    # Jinja's own builtins, plus `request`, which Starlette injects itself.
+    ambient |= {"range", "dict", "lipsum", "cycler", "joiner", "namespace", "request"}
+
+    def needed(rel: str) -> set[str]:
+        """Undeclared names in `rel` and everything it extends/includes.
+
+        Three classes of name are excluded, because none of them is something
+        the route owes the template:
+
+          * template-local `{% set %}` and `{% import ... as x %}` bindings —
+            supplied by the template itself, and flagging them would bury the
+            real failures in noise;
+          * Jinja's own builtins;
+          * names read through `| default(...)`. `StrictUndefined` only raises
+            when a value is actually *used*; `{{ x | default('') }}` and
+            `{{ x or '' }}` are precisely the idioms a template uses to opt out
+            of that, so treating them as failures would force every such page to
+            pass a constant. `base.html` reads `active_nav | default('')` and
+            every other template inherits it, so ignoring this rule flags all
+            ~40 pages at once and the signal drowns.
+        """
+        seen: set[str] = set()
+        out: set[str] = set()
+        local: set[str] = set()
+        stack = [rel]
+        while stack:
+            cur = stack.pop()
+            if cur in seen or not (TEMPLATES_DIR / cur).exists():
+                continue
+            seen.add(cur)
+            parsed = env.parse((TEMPLATES_DIR / cur).read_text(encoding="utf-8"))
+            out |= meta.find_undeclared_variables(parsed)
+            out -= _tolerated_undefined(parsed)
+            # `{% set %}` — Jinja's Assign node holds one `target`, which is a
+            # Name for a simple binding and a Tuple for `{% set a, b = ... %}`.
+            for node in parsed.find_all(jnodes.Assign):
+                targets = (node.target.items
+                           if isinstance(node.target, (jnodes.Tuple, jnodes.List))
+                           else [node.target])
+                for target in targets:
+                    if isinstance(target, jnodes.Name):
+                        local.add(target.name)
+            # In this Jinja version `Import.target` is a plain string.
+            for node in parsed.find_all(jnodes.Import):
+                if isinstance(node.target, str):
+                    local.add(node.target)
+            for node in parsed.find_all(jnodes.FromImport):
+                for name in node.names:
+                    if isinstance(name.name, str):
+                        local.add(name.name)
+            for tag in (jnodes.Extends, jnodes.Include):
+                for node in parsed.find_all(tag):
+                    if isinstance(node.template, jnodes.Const):
+                        stack.append(str(node.template.value))
+        return out - local
+
+    def passed(fn: ast.AST) -> set[str]:
+        """Names the function's `render()` call(s) pass, `**kwargs` included."""
+        supplied: set[str] = set()
+        renders = [
+            node for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "render"
+        ]
+        for call in renders:
+            for kw in call.keywords:
+                if kw.arg is not None:
+                    supplied.add(kw.arg)
+                else:
+                    # `**context` — union the string keys of the dicts
+                    # assigned anywhere in this function.
+                    for inner in ast.walk(fn):
+                        if isinstance(inner, ast.Assign) and isinstance(inner.value, ast.Dict):
+                            supplied |= {
+                                k.value for k in inner.value.keys
+                                if isinstance(k, ast.Constant)
+                            }
+        return supplied
+
+    for mod in sorted(routes_dir.glob("*.py")):
+        tree = ast.parse(mod.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                continue
+            rendered = {
+                a.value
+                for call in ast.walk(fn)
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                and call.func.id == "render"
+                for a in call.args
+                if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                and a.value.endswith(".html")
+            }
+            if not rendered:
+                continue
+            supplied = passed(fn)
+            for tpl in sorted(rendered):
+                missing = needed(tpl) - ambient - supplied
+                check(
+                    f"{mod.stem}.{fn.name} -> {tpl} passes every name it reads",
+                    not missing,
+                    f"missing {sorted(missing)}; StrictUndefined turns each into "
+                    "an HTTP 500 on this page",
+                )
+
+
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     section_passwords()
     section_sessions()
@@ -1647,6 +1837,7 @@ def main() -> None:
     section_config_lifecycle()
     section_migration_agreement()
     section_templates()
+    section_template_contracts()
 
     print()
     if FAILURES:

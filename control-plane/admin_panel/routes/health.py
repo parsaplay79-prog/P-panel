@@ -198,5 +198,12 @@ async def health_history(
         runs=runs[:40],
         thresholds=thresholds,
         held=node.state in OPERATOR_HELD_STATES,
+        # `history.html` opens by naming the node's state in both languages and
+        # colouring the tag, exactly as `overview.html` does. The template
+        # environment runs StrictUndefined, so a route that renders that
+        # template without these raises `UndefinedError` and returns 500 —
+        # which is how the overview could work and the per-node history not.
+        NODE_STATE_FA=NODE_STATE_FA,
+        NODE_STATE_TAG=NODE_STATE_TAG,
         active_nav="/admin/health",
     )

@@ -45,7 +45,13 @@ async def login_form(
             ):
                 return RedirectResponse("/admin/", status_code=303)
 
-    return render(request, "login.html", title="ورود")
+    # `error` is passed explicitly rather than defaulted in the template. The
+    # template tests it with a bare `{% if error %}` — no `| default`, no `or` —
+    # and the environment is StrictUndefined, so an Undefined there is a raised
+    # UndefinedError. This is the one page in the product an anonymous visitor
+    # can reach, so an Undefined here is a 500 on the front door rather than on
+    # some page only an admin visits.
+    return render(request, "login.html", title="ورود", error=None, username="")
 
 
 @router.post("/login")

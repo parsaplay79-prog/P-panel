@@ -189,6 +189,7 @@ async def ticket_detail(
     # state in front of the operator rather than after switching pages.
     from db.models import Configuration
     from domain import configurations as config_domain
+    from domain import customers as customer_domain
 
     configs = (
         await db.execute(
@@ -211,6 +212,10 @@ async def ticket_detail(
         TICKET_STATUS_FA=TICKET_STATUS_FA,
         TICKET_STATUS_TAG=TICKET_STATUS_TAG,
         CONFIG_STATUS_FA=config_domain.CONFIG_STATUS_FA,
+        # `detail.html` labels the customer's own status next to the ticket
+        # status, the same mapping the customers page renders. The template
+        # environment is StrictUndefined, so omitting it 500s this page.
+        CUSTOMER_STATUS_FA=customer_domain.CUSTOMER_STATUS_FA,
         active_nav="/admin/tickets",
     )
 
